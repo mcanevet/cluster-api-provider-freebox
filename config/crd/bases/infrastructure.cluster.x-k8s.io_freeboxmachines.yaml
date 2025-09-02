@@ -39,10 +39,22 @@ spec:
           spec:
             description: spec defines the desired state of FreeboxMachine
             properties:
-              foo:
-                description: foo is an example field of FreeboxMachine. Edit freeboxmachine_types.go
-                  to remove/update
+              cpu:
+                description: Number of vCPUs
+                type: integer
+              image:
+                description: 'Image to use (ex: "debian-bullseye")'
                 type: string
+              memory:
+                description: Size of the RAM in MB
+                type: integer
+              name:
+                description: Name of the VM in the Freebox
+                type: string
+            required:
+            - cpu
+            - memory
+            - name
             type: object
           status:
             description: status defines the observed state of FreeboxMachine
@@ -116,6 +128,15 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              ipAddress:
+                description: IP address of the VM if available
+                type: string
+              state:
+                description: State of the VM (running, stopped, error, etc.)
+                type: string
+              vmId:
+                description: ID of the VM in the Freebox
+                type: string
             type: object
         required:
         - spec

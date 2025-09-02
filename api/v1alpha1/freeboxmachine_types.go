@@ -25,24 +25,19 @@ import (
 
 // FreeboxMachineSpec defines the desired state of FreeboxMachine
 type FreeboxMachineSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of FreeboxMachine. Edit freeboxmachine_types.go to remove/update
+	// Name of the VM in the Freebox
+	Name string `json:"name"`
+	// Number of vCPUs
+	CPU int `json:"cpu"`
+	// Size of the RAM in MB
+	Memory int `json:"memory"`
+	// Image to use (ex: "debian-bullseye")
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	Image string `json:"image,omitempty"`
 }
 
 // FreeboxMachineStatus defines the observed state of FreeboxMachine.
 type FreeboxMachineStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
 	// conditions represent the current state of the FreeboxMachine resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
@@ -56,6 +51,13 @@ type FreeboxMachineStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// ID of the VM in the Freebox
+	VMID string `json:"vmId,omitempty"`
+	// State of the VM (running, stopped, error, etc.)
+	State string `json:"state,omitempty"`
+	// IP address of the VM if available
+	IPAddress string `json:"ipAddress,omitempty"`
 }
 
 // +kubebuilder:object:root=true
