@@ -88,5 +88,5 @@ type FreeboxClusterList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&FreeboxCluster{}, &FreeboxClusterList{})
+	objectTypes = append(objectTypes, &FreeboxCluster{}, &FreeboxClusterList{})
 }
