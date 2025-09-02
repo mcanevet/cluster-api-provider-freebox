@@ -1,0 +1,9 @@
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: FreeboxMachine
+metadata:
+  labels:
+    app.kubernetes.io/name: cluster-api-provider-freebox
+    app.kubernetes.io/managed-by: kustomize
+  name: freeboxmachine-sample
+spec:
+  # TODO(user): Add fields here
