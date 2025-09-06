@@ -58,6 +58,8 @@ type FreeboxMachineStatus struct {
 	State string `json:"state,omitempty"`
 	// ID of the download task
 	DownloadTaskID int64 `json:"downloadTaskId,omitempty"`
+	// ID of the extraction task
+	ExtractionTaskID int64 `json:"extractionTaskID,omitempty"`
 }
 
 // +kubebuilder:object:root=true

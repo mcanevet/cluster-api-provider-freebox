@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 
@@ -71,21 +72,21 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Get the image URL from spec
-	if machine.Spec.ImageURL == "" {
+	imageURL := machine.Spec.ImageURL
+	if imageURL == "" {
 		logger.Info("No ImageURL specified in spec, skipping")
 		return ctrl.Result{}, nil
 	}
-	imageURL := machine.Spec.ImageURL
-
-	// Extract image name from URL
-	parts := strings.Split(imageURL, "/")
-	imageName := parts[len(parts)-1]
 
 	destDir := "/SSD/VMs"
+	imageName := path.Base(imageURL)
 
-	// If no task exists, create it
+	// ---------------------
+	// Download phase
+	// ---------------------
 	if machine.Status.DownloadTaskID == 0 {
+		logger.Info("Starting download phase", "url", imageURL)
+
 		reqDownload := freeboxTypes.DownloadRequest{
 			DownloadURLs:      []string{imageURL},
 			DownloadDirectory: destDir,
@@ -99,59 +100,128 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 
 		logger.Info("Download task created", "taskID", taskID)
-
 		machine.Status.DownloadTaskID = taskID
 		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-			Type:    "ImageReady",
+			Type:    ConditionImageReady,
 			Status:  metav1.ConditionFalse,
 			Reason:  "Downloading",
 			Message: fmt.Sprintf("Download started, task_id=%d", taskID),
 		})
-
 		_ = r.Status().Update(ctx, &machine)
+
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	// Fetch current status of the download task
-	task, err := r.FreeboxClient.GetDownloadTask(ctx, machine.Status.DownloadTaskID)
+	// Wait for download to finish
+	downloadTask, err := r.FreeboxClient.GetDownloadTask(ctx, machine.Status.DownloadTaskID)
 	if err != nil {
-		logger.Error(err, "Failed to get download task status", "taskID", machine.Status.DownloadTaskID)
+		logger.Error(err, "Failed to get download task status")
 		return ctrl.Result{}, err
 	}
 
-	// Update ImageReady condition based on task status
-	switch task.Status {
+	switch downloadTask.Status {
 	case freeboxTypes.DownloadTaskStatusDone:
-		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-			Type:    "ImageReady",
-			Status:  metav1.ConditionTrue,
-			Reason:  "DownloadComplete",
-			Message: "Image download completed",
-		})
+		logger.Info("Download completed", "taskID", machine.Status.DownloadTaskID)
 	case freeboxTypes.DownloadTaskStatusError:
 		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-			Type:    "ImageReady",
+			Type:    ConditionImageReady,
 			Status:  metav1.ConditionFalse,
 			Reason:  "DownloadFailed",
-			Message: "Image download failed",
+			Message: fmt.Sprintf("Download task failed: %s", downloadTask.Error),
 		})
+		_ = r.Status().Update(ctx, &machine)
+		return ctrl.Result{}, fmt.Errorf("download failed: %s", downloadTask.Error)
 	default:
-		progress := 0
-		if task.SizeBytes > 0 {
-			progress = int(task.ReceivedBytes * 100 / task.SizeBytes)
-		}
-		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-			Type:    "ImageReady",
-			Status:  metav1.ConditionFalse,
-			Reason:  "Downloading",
-			Message: fmt.Sprintf("Download in progress… %d%%", progress),
-		})
+		// still downloading
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	_ = r.Status().Update(ctx, &machine)
+	// ---------------------
+	// Extraction phase
+	// ---------------------
+	if machine.Status.ExtractionTaskID == 0 && isCompressedFile(imageName) {
+		srcPath := path.Join(destDir, imageName)
+		extractDest := destDir
 
-	// Requeue to continue tracking progress until done
-	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		fsPayload := freeboxTypes.ExtractFilePayload{
+			Src: freeboxTypes.Base64Path(srcPath),
+			Dst: freeboxTypes.Base64Path(extractDest),
+		}
+
+		fsTask, err := r.FreeboxClient.ExtractFile(ctx, fsPayload)
+		if err != nil {
+			logger.Error(err, "Failed to start extraction")
+			return ctrl.Result{}, err
+		}
+
+		logger.Info("Extraction task created", "taskID", fsTask.ID)
+		machine.Status.ExtractionTaskID = fsTask.ID
+		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+			Type:    ConditionImageReady,
+			Status:  metav1.ConditionFalse,
+			Reason:  "Extracting",
+			Message: "Image extraction started",
+		})
+		_ = r.Status().Update(ctx, &machine)
+
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	// Wait for extraction to finish
+	if machine.Status.ExtractionTaskID != 0 {
+		fsTask, err := r.FreeboxClient.GetFileSystemTask(ctx, machine.Status.ExtractionTaskID)
+		if err != nil {
+			logger.Error(err, "Failed to get extraction task status")
+			return ctrl.Result{}, err
+		}
+
+		switch fsTask.State {
+		case "done":
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    ConditionImageReady,
+				Status:  metav1.ConditionTrue,
+				Reason:  "Completed",
+				Message: "Image downloaded and extracted",
+			})
+			_ = r.Status().Update(ctx, &machine)
+			logger.Info("Extraction completed", "taskID", fsTask.ID)
+			return ctrl.Result{}, nil
+
+		case "error":
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    ConditionImageReady,
+				Status:  metav1.ConditionFalse,
+				Reason:  "ExtractionFailed",
+				Message: "Image extraction failed",
+			})
+			_ = r.Status().Update(ctx, &machine)
+			return ctrl.Result{}, fmt.Errorf("extraction failed")
+		default:
+			// still extracting
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+	}
+
+	// If not compressed, we consider the image ready
+	meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+		Type:    ConditionImageReady,
+		Status:  metav1.ConditionTrue,
+		Reason:  "Completed",
+		Message: "Image downloaded (no extraction needed)",
+	})
+	_ = r.Status().Update(ctx, &machine)
+	return ctrl.Result{}, nil
+}
+
+// Helper to check if a file is a known compressed format
+func isCompressedFile(name string) bool {
+	ext := strings.ToLower(path.Ext(name))
+	switch ext {
+	case ".gz", ".xz", ".bz2", ".zip", ".tar":
+		return true
+	default:
+		return false
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.
