@@ -56,10 +56,6 @@ type FreeboxMachineStatus struct {
 	VMID string `json:"vmId,omitempty"`
 	// State of the VM (running, stopped, error, etc.)
 	State string `json:"state,omitempty"`
-	// ID of the download task
-	DownloadTaskID int64 `json:"downloadTaskId,omitempty"`
-	// ID of the extraction task
-	ExtractionTaskID int64 `json:"extractionTaskID,omitempty"`
 }
 
 // +kubebuilder:object:root=true
