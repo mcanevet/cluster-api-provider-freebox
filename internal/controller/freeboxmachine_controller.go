@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -70,10 +71,18 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Hardcoded URL and destination path
-	imageURL := "https://factory.talos.dev/image/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba/v1.10.6/nocloud-arm64.raw.xz"
+	// Get the image URL from spec
+	if machine.Spec.ImageURL == "" {
+		logger.Info("No ImageURL specified in spec, skipping")
+		return ctrl.Result{}, nil
+	}
+	imageURL := machine.Spec.ImageURL
+
+	// Extract image name from URL
+	parts := strings.Split(imageURL, "/")
+	imageName := parts[len(parts)-1]
+
 	destDir := "/SSD/VMs"
-	imageName := "nocloud-arm64.raw"
 
 	// If no task exists, create it
 	if machine.Status.DownloadTaskID == 0 {
