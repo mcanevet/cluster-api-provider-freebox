@@ -28,12 +28,12 @@ type FreeboxMachineSpec struct {
 	// Name of the VM in the Freebox
 	Name string `json:"name"`
 	// Number of vCPUs
-	CPU int `json:"cpu"`
+	CPU int64 `json:"cpu"`
 	// Size of the RAM in MB
-	Memory int `json:"memory"`
+	Memory int64 `json:"memory"`
 	// Image to use (ex: "debian-bullseye")
 	// +optional
-	Image string `json:"image,omitempty"`
+	ImageURL string `json:"imageURL,omitempty"`
 }
 
 // FreeboxMachineStatus defines the observed state of FreeboxMachine.
@@ -56,8 +56,8 @@ type FreeboxMachineStatus struct {
 	VMID string `json:"vmId,omitempty"`
 	// State of the VM (running, stopped, error, etc.)
 	State string `json:"state,omitempty"`
-	// IP address of the VM if available
-	IPAddress string `json:"ipAddress,omitempty"`
+	// ID of the download task
+	DownloadTaskID int64 `json:"downloadTaskId,omitempty"`
 }
 
 // +kubebuilder:object:root=true

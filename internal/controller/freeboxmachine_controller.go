@@ -18,19 +18,33 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	freeboxclient "github.com/nikolalohinski/free-go/client"
+	freeboxTypes "github.com/nikolalohinski/free-go/types"
+
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+const (
+	ConditionImageReady    = "ImageReady"
+	ConditionVMProvisioned = "VMProvisioned"
+	ConditionReady         = "Ready"
 )
 
 // FreeboxMachineReconciler reconciles a FreeboxMachine object
 type FreeboxMachineReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme        *runtime.Scheme
+	FreeboxClient freeboxclient.Client
 }
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=freeboxmachines,verbs=get;list;watch;create;update;patch;delete
@@ -48,11 +62,87 @@ type FreeboxMachineReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
 func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	logger := logf.FromContext(ctx)
 
-	// TODO(user): your logic here
+	// Fetch the FreeboxMachine
+	var machine infrastructurev1alpha1.FreeboxMachine
+	if err := r.Get(ctx, req.NamespacedName, &machine); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
 
-	return ctrl.Result{}, nil
+	// Hardcoded URL and destination path
+	imageURL := "https://factory.talos.dev/image/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba/v1.10.6/nocloud-arm64.raw.xz"
+	destDir := "/SSD/VMs"
+	imageName := "nocloud-arm64.raw"
+
+	// If no task exists, create it
+	if machine.Status.DownloadTaskID == 0 {
+		reqDownload := freeboxTypes.DownloadRequest{
+			DownloadURLs:      []string{imageURL},
+			DownloadDirectory: destDir,
+			Filename:          imageName,
+		}
+
+		taskID, err := r.FreeboxClient.AddDownloadTask(ctx, reqDownload)
+		if err != nil {
+			logger.Error(err, "Failed to create download task")
+			return ctrl.Result{}, err
+		}
+
+		logger.Info("Download task created", "taskID", taskID)
+
+		machine.Status.DownloadTaskID = taskID
+		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+			Type:    "ImageReady",
+			Status:  metav1.ConditionFalse,
+			Reason:  "Downloading",
+			Message: fmt.Sprintf("Download started, task_id=%d", taskID),
+		})
+
+		_ = r.Status().Update(ctx, &machine)
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	// Fetch current status of the download task
+	task, err := r.FreeboxClient.GetDownloadTask(ctx, machine.Status.DownloadTaskID)
+	if err != nil {
+		logger.Error(err, "Failed to get download task status", "taskID", machine.Status.DownloadTaskID)
+		return ctrl.Result{}, err
+	}
+
+	// Update ImageReady condition based on task status
+	switch task.Status {
+	case freeboxTypes.DownloadTaskStatusDone:
+		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+			Type:    "ImageReady",
+			Status:  metav1.ConditionTrue,
+			Reason:  "DownloadComplete",
+			Message: "Image download completed",
+		})
+	case freeboxTypes.DownloadTaskStatusError:
+		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+			Type:    "ImageReady",
+			Status:  metav1.ConditionFalse,
+			Reason:  "DownloadFailed",
+			Message: "Image download failed",
+		})
+	default:
+		progress := 0
+		if task.SizeBytes > 0 {
+			progress = int(task.ReceivedBytes * 100 / task.SizeBytes)
+		}
+		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+			Type:    "ImageReady",
+			Status:  metav1.ConditionFalse,
+			Reason:  "Downloading",
+			Message: fmt.Sprintf("Download in progress… %d%%", progress),
+		})
+	}
+
+	_ = r.Status().Update(ctx, &machine)
+
+	// Requeue to continue tracking progress until done
+	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

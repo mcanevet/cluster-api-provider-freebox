@@ -24,13 +24,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	freeboxclient "github.com/nikolalohinski/free-go/client"
+
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
 )
 
 // FreeboxClusterReconciler reconciles a FreeboxCluster object
 type FreeboxClusterReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme        *runtime.Scheme
+	FreeboxClient freeboxclient.Client
 }
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=freeboxclusters,verbs=get;list;watch;create;update;patch;delete

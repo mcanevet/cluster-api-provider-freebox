@@ -23,6 +23,7 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+	freeboxclient "github.com/nikolalohinski/free-go/client"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -178,16 +179,68 @@ func main() {
 		os.Exit(1)
 	}
 
+	freeboxEndpoint := os.Getenv("FREEBOX_ENDPOINT")
+	if freeboxEndpoint == "" {
+		freeboxEndpoint = "http://mafreebox.freebox.fr"
+	}
+
+	freeboxVersion := os.Getenv("FREEBOX_VERSION")
+	if freeboxVersion == "" {
+		freeboxVersion = "latest"
+	}
+
+	fbClient, err := freeboxclient.New(freeboxEndpoint, freeboxVersion)
+	if err != nil {
+		setupLog.Error(err, "unable to create freebox client")
+		os.Exit(1)
+	}
+
+	freeboxAppID := os.Getenv("FREEBOX_APP_ID")
+	if freeboxAppID == "" {
+		setupLog.Error(err, "FREEBOX_APP_ID undefined")
+		os.Exit(1)
+	}
+	fbClient.WithAppID(freeboxAppID)
+
+	freeboxToken := os.Getenv("FREEBOX_TOKEN")
+	if freeboxToken == "" {
+		setupLog.Error(err, "FREEBOX_TOKEN undefined")
+		os.Exit(1)
+	}
+	fbClient.WithPrivateToken(freeboxToken)
+
+	setupLog.Info("Freebox client created successfully")
+
+	// // TODO: remove this
+	// ctx := context.Background()
+
+	// vms, err := client.ListVirtualMachines(ctx)
+	// if err != nil {
+	// 	setupLog.Error(err, "Can not list VMs")
+	// 	os.Exit(1)
+	// }
+
+	// if len(vms) == 0 {
+	// 	setupLog.Info("No VMs found")
+	// } else {
+	// 	for _, vm := range vms {
+	// 		setupLog.Info("VM found", "ID", vm.ID, "Name", vm.Name, "Status", vm.Status)
+	// 	}
+	// }
+	// // END TODO
+
 	if err := (&controller.FreeboxClusterReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		FreeboxClient: fbClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FreeboxCluster")
 		os.Exit(1)
 	}
 	if err := (&controller.FreeboxMachineReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		FreeboxClient: fbClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FreeboxMachine")
 		os.Exit(1)

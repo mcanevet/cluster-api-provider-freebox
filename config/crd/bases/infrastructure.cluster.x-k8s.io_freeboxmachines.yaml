@@ -41,12 +41,14 @@ spec:
             properties:
               cpu:
                 description: Number of vCPUs
+                format: int64
                 type: integer
-              image:
+              imageURL:
                 description: 'Image to use (ex: "debian-bullseye")'
                 type: string
               memory:
                 description: Size of the RAM in MB
+                format: int64
                 type: integer
               name:
                 description: Name of the VM in the Freebox
@@ -128,9 +130,10 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              ipAddress:
-                description: IP address of the VM if available
-                type: string
+              downloadTaskId:
+                description: ID of the download task
+                format: int64
+                type: integer
               state:
                 description: State of the VM (running, stopped, error, etc.)
                 type: string
