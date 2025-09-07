@@ -43,6 +43,10 @@ spec:
                 description: Number of vCPUs
                 format: int64
                 type: integer
+              diskSizeBytes:
+                description: Size of the disk in MB
+                format: int64
+                type: integer
               imageURL:
                 description: 'Image to use (ex: "debian-bullseye")'
                 type: string

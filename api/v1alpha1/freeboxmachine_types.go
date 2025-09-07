@@ -31,6 +31,8 @@ type FreeboxMachineSpec struct {
 	CPU int64 `json:"cpu"`
 	// Size of the RAM in MB
 	Memory int64 `json:"memory"`
+	// Size of the disk in MB
+	DiskSizeBytes int64 `json:"diskSizeBytes,omitempty"`
 	// Image to use (ex: "debian-bullseye")
 	// +optional
 	ImageURL string `json:"imageURL,omitempty"`

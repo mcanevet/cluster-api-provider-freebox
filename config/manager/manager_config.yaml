@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-manager
+  namespace: system
+spec:
+  template:
+    spec:
+      containers:
+      - name: manager
+        env:
+        - name: FREEBOX_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: freebox-config
+              key: endpoint
+        - name: FREEBOX_VERSION
+          valueFrom:
+            configMapKeyRef:
+              name: freebox-config
+              key: version
+        - name: FREEBOX_APP_ID
+          valueFrom:
+            configMapKeyRef:
+              name: freebox-config
+              key: app_id
+        - name: FREEBOX_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: freebox-secret
+              key: token
+        - name: FREEBOX_DEVICE
+          valueFrom:
+            configMapKeyRef:
+              name: freebox-config
+              key: device

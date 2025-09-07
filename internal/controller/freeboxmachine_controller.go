@@ -66,7 +66,7 @@ type FreeboxMachineReconciler struct {
 func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
 
-	// Fetch the FreeboxMachine
+	// Fetch the FreeboxMachine resource
 	var machine infrastructurev1alpha1.FreeboxMachine
 	if err := r.Get(ctx, req.NamespacedName, &machine); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -74,27 +74,29 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	imageURL := machine.Spec.ImageURL
 	if imageURL == "" {
-		logger.Info("No ImageURL specified in spec, skipping")
+		logger.Info("No ImageURL specified, skipping reconciliation")
 		return ctrl.Result{}, nil
 	}
 
 	destDir := "/SSD/VMs"
 	imageName := path.Base(imageURL)
+	imagePath := path.Join(destDir, imageName)
 
-	// Retrieve current phase from conditions
+	// Retrieve current phase
 	phaseCond := meta.FindStatusCondition(machine.Status.Conditions, "ImagePhase")
-	var taskID int64
 	var phase string
+	var taskID int64
+	var srcPath, dstPath string
+
 	if phaseCond != nil {
-		fmt.Sscanf(phaseCond.Message, "phase=%s task_id=%d", &phase, &taskID)
+		fmt.Sscanf(phaseCond.Message, "phase=%s task_id=%d src=%s dst=%s", &phase, &taskID, &srcPath, &dstPath)
 	}
 
-	switch phase {
-	case "":
-		// ---------------------
-		// Start download
-		// ---------------------
-		logger.Info("Starting download phase", "url", imageURL)
+	// -----------------------
+	// 1. Start download
+	// -----------------------
+	if phase == "" {
+		logger.Info("Starting image download", "url", imageURL)
 
 		reqDownload := freeboxTypes.DownloadRequest{
 			DownloadURLs:      []string{imageURL},
@@ -108,25 +110,21 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
-		logger.Info("Download task created", "taskID", newTaskID)
-		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-			Type:    ConditionImageReady,
-			Status:  metav1.ConditionFalse,
-			Reason:  "Downloading",
-			Message: fmt.Sprintf("Download started, task_id=%d", newTaskID),
-		})
 		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 			Type:    "ImagePhase",
 			Status:  metav1.ConditionFalse,
 			Reason:  "Downloading",
 			Message: fmt.Sprintf("phase=download task_id=%d", newTaskID),
 		})
-
 		_ = r.Status().Update(ctx, &machine)
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 
-	case "download":
-		// Wait for download to finish
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	// -----------------------
+	// 2. Wait for download
+	// -----------------------
+	if phase == "download" {
 		downloadTask, err := r.FreeboxClient.GetDownloadTask(ctx, taskID)
 		if err != nil {
 			logger.Error(err, "Failed to get download task status")
@@ -136,51 +134,49 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		switch downloadTask.Status {
 		case freeboxTypes.DownloadTaskStatusDone:
 			logger.Info("Download completed", "taskID", taskID)
-			// Update phase to extraction if needed
+
 			if isCompressedFile(imageName) {
 				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 					Type:    "ImagePhase",
 					Status:  metav1.ConditionFalse,
 					Reason:  "Extracting",
-					Message: fmt.Sprintf("phase=extract task_id=0 src=%s dst=%s", path.Join(destDir, imageName), destDir),
+					Message: fmt.Sprintf("phase=extract task_id=0 src=%s dst=%s", imagePath, destDir),
 				})
 			} else {
-				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-					Type:    ConditionImageReady,
-					Status:  metav1.ConditionTrue,
-					Reason:  "Completed",
-					Message: "Image downloaded (no extraction needed)",
-				})
+				// Skip extraction → go directly to resize
 				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 					Type:    "ImagePhase",
-					Status:  metav1.ConditionTrue,
-					Reason:  "Completed",
-					Message: "phase=done",
+					Status:  metav1.ConditionFalse,
+					Reason:  "Resizing",
+					Message: fmt.Sprintf("phase=resize task_id=0 disk=%s", imagePath),
 				})
 			}
 			_ = r.Status().Update(ctx, &machine)
 			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 
 		case freeboxTypes.DownloadTaskStatusError:
+			logger.Error(fmt.Errorf("download failed"), "Download failed")
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    ConditionImageReady,
+				Type:    "ImagePhase",
 				Status:  metav1.ConditionFalse,
 				Reason:  "DownloadFailed",
-				Message: fmt.Sprintf("Download task failed: %s", downloadTask.Error),
+				Message: "Image download failed",
 			})
 			_ = r.Status().Update(ctx, &machine)
-			return ctrl.Result{}, fmt.Errorf("download failed: %s", downloadTask.Error)
+			return ctrl.Result{}, fmt.Errorf("download failed")
 
 		default:
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
+	}
 
-	case "extract":
-		// Retrieve source/destination from message
-		var srcPath, dstPath string
+	// -----------------------
+	// 3. Extraction phase
+	// -----------------------
+	if phase == "extract" {
 		fmt.Sscanf(phaseCond.Message, "phase=extract task_id=%d src=%s dst=%s", &taskID, &srcPath, &dstPath)
 
-		// If task_id==0, start extraction
+		// Start extraction if task_id == 0
 		if taskID == 0 {
 			fsPayload := freeboxTypes.ExtractFilePayload{
 				Src: freeboxTypes.Base64Path(srcPath),
@@ -193,7 +189,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				return ctrl.Result{}, err
 			}
 
-			logger.Info("Extraction task created", "taskID", fsTask.ID)
+			logger.Info("Extraction started", "taskID", fsTask.ID)
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImagePhase",
 				Status:  metav1.ConditionFalse,
@@ -204,20 +200,96 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 
-		// Otherwise, wait for extraction to finish
+		// Wait for extraction to finish
 		fsTask, err := r.FreeboxClient.GetFileSystemTask(ctx, taskID)
 		if err != nil {
 			logger.Error(err, "Failed to get extraction task status")
 			return ctrl.Result{}, err
 		}
 
-		switch fsTask.State {
-		case "done":
+		if fsTask.State == "done" {
+			logger.Info("Extraction completed", "taskID", taskID)
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    "ImagePhase",
+				Status:  metav1.ConditionFalse,
+				Reason:  "Resizing",
+				Message: fmt.Sprintf("phase=resize task_id=0 disk=%s", stripCompressionSuffix(imagePath)),
+			})
+			_ = r.Status().Update(ctx, &machine)
+			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+		} else if fsTask.State == "error" {
+			logger.Error(fmt.Errorf("extraction failed"), "Extraction failed")
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    "ImagePhase",
+				Status:  metav1.ConditionFalse,
+				Reason:  "ExtractionFailed",
+				Message: "Image extraction failed",
+			})
+			_ = r.Status().Update(ctx, &machine)
+			return ctrl.Result{}, fmt.Errorf("extraction failed")
+		}
+
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	// -----------------------
+	// 4. Resize disk
+	// -----------------------
+	if phase == "resize" {
+		var diskPath string
+		fmt.Sscanf(phaseCond.Message, "phase=resize task_id=%d disk=%s", &taskID, &diskPath)
+
+		// Start resize if not started yet
+		if taskID == 0 {
+			resizePayload := freeboxTypes.VirtualDisksResizePayload{
+				DiskPath:    freeboxTypes.Base64Path(diskPath),
+				NewSize:     machine.Spec.DiskSizeBytes,
+				ShrinkAllow: false,
+			}
+
+			newTaskID, err := r.FreeboxClient.ResizeVirtualDisk(ctx, resizePayload)
+			if err != nil {
+				logger.Error(err, "Failed to start disk resize")
+				return ctrl.Result{}, err
+			}
+
+			logger.Info("Resize task started", "taskID", newTaskID)
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    "ImagePhase",
+				Status:  metav1.ConditionFalse,
+				Reason:  "Resizing",
+				Message: fmt.Sprintf("phase=resize task_id=%d disk=%s", newTaskID, diskPath),
+			})
+			_ = r.Status().Update(ctx, &machine)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		// Wait for resize to finish
+		resizeTask, err := r.FreeboxClient.GetVirtualDiskTask(ctx, taskID)
+		if err != nil {
+			logger.Error(err, "Failed to get resize task status")
+			return ctrl.Result{}, err
+		}
+
+		if resizeTask.Done {
+			if resizeTask.Error {
+				logger.Error(fmt.Errorf("resize failed"), "Disk resize failed")
+				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+					Type:    "ImagePhase",
+					Status:  metav1.ConditionFalse,
+					Reason:  "ResizeFailed",
+					Message: "Disk resize failed",
+				})
+				_ = r.Status().Update(ctx, &machine)
+				return ctrl.Result{}, fmt.Errorf("resize failed")
+			}
+
+			logger.Info("Disk resize completed", "taskID", taskID)
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    ConditionImageReady,
 				Status:  metav1.ConditionTrue,
 				Reason:  "Completed",
-				Message: "Image downloaded and extracted",
+				Message: "Image downloaded, extracted, and resized",
 			})
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImagePhase",
@@ -226,26 +298,14 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Message: "phase=done",
 			})
 			_ = r.Status().Update(ctx, &machine)
-			logger.Info("Extraction completed", "taskID", taskID)
 			return ctrl.Result{}, nil
-
-		case "error":
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    ConditionImageReady,
-				Status:  metav1.ConditionFalse,
-				Reason:  "ExtractionFailed",
-				Message: "Image extraction failed",
-			})
-			_ = r.Status().Update(ctx, &machine)
-			return ctrl.Result{}, fmt.Errorf("extraction failed")
-
-		default:
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 
-	default:
-		return ctrl.Result{}, nil
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
+
+	// If we reach here, we're done
+	return ctrl.Result{}, nil
 }
 
 // Helper to check if a file is a known compressed format
@@ -257,6 +317,23 @@ func isCompressedFile(name string) bool {
 	default:
 		return false
 	}
+}
+
+// stripCompressionSuffix removes the trailing compression extension
+// e.g. "nocloud.raw.xz" -> "nocloud.raw"
+func stripCompressionSuffix(name string) string {
+	lower := strings.ToLower(name)
+	compressedExts := []string{".xz", ".gz", ".bz2", ".zip", ".tar"}
+	for _, ext := range compressedExts {
+		if strings.HasSuffix(lower, ext) {
+			return name[:len(name)-len(ext)]
+		}
+	}
+	// fallback: use path.Ext trimming once
+	if ext := path.Ext(name); ext != "" {
+		return strings.TrimSuffix(name, ext)
+	}
+	return name
 }
 
 // SetupWithManager sets up the controller with the Manager.
