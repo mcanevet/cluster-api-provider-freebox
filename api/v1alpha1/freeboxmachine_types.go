@@ -28,14 +28,15 @@ type FreeboxMachineSpec struct {
 	// Name of the VM in the Freebox
 	Name string `json:"name"`
 	// Number of vCPUs
-	CPU int64 `json:"cpu"`
+	// +kubebuilder:validation:Minimum=1
+	VCPUs int64 `json:"vcpus"` // e.g. 2
 	// Size of the RAM in MB
-	Memory int64 `json:"memory"`
+	// +kubebuilder:validation:Minimum=1
+	MemoryMB int64 `json:"memoryMB"` // e.g. 2048 for 2GB
 	// Size of the disk in MB
-	DiskSizeBytes int64 `json:"diskSizeBytes,omitempty"`
+	DiskSizeBytes int64 `json:"diskSizeBytes"`
 	// Image to use (ex: "debian-bullseye")
-	// +optional
-	ImageURL string `json:"imageURL,omitempty"`
+	ImageURL string `json:"imageURL"`
 }
 
 // FreeboxMachineStatus defines the observed state of FreeboxMachine.

@@ -285,11 +285,32 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 
 			logger.Info("Disk resize completed", "taskID", taskID)
+
+			// -----------------------
+			// 5. Create VM
+			// -----------------------
+			vmPayload := freeboxTypes.VirtualMachinePayload{
+				Name:     machine.Name,
+				DiskPath: freeboxTypes.Base64Path(stripCompressionSuffix(imagePath)),
+				DiskType: freeboxTypes.RawDisk,
+				Memory:   machine.Spec.MemoryMB,
+				VCPUs:    machine.Spec.VCPUs,
+				OS:       freeboxTypes.UnknownOS,
+			}
+
+			vm, err := r.FreeboxClient.CreateVirtualMachine(ctx, vmPayload)
+			if err != nil {
+				logger.Error(err, "Failed to create virtual machine")
+				return ctrl.Result{}, err
+			}
+
+			logger.Info("VM created", "vmID", vm.ID)
+
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    ConditionImageReady,
 				Status:  metav1.ConditionTrue,
 				Reason:  "Completed",
-				Message: "Image downloaded, extracted, and resized",
+				Message: "Image downloaded, extracted, resized, and VM created",
 			})
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImagePhase",
@@ -298,6 +319,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Message: "phase=done",
 			})
 			_ = r.Status().Update(ctx, &machine)
+
 			return ctrl.Result{}, nil
 		}
 

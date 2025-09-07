@@ -39,10 +39,6 @@ spec:
           spec:
             description: spec defines the desired state of FreeboxMachine
             properties:
-              cpu:
-                description: Number of vCPUs
-                format: int64
-                type: integer
               diskSizeBytes:
                 description: Size of the disk in MB
                 format: int64
@@ -50,17 +46,25 @@ spec:
               imageURL:
                 description: 'Image to use (ex: "debian-bullseye")'
                 type: string
-              memory:
+              memoryMB:
                 description: Size of the RAM in MB
                 format: int64
+                minimum: 1
                 type: integer
               name:
                 description: Name of the VM in the Freebox
                 type: string
+              vcpus:
+                description: Number of vCPUs
+                format: int64
+                minimum: 1
+                type: integer
             required:
-            - cpu
-            - memory
+            - diskSizeBytes
+            - imageURL
+            - memoryMB
             - name
+            - vcpus
             type: object
           status:
             description: status defines the observed state of FreeboxMachine
