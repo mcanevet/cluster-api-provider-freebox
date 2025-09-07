@@ -58,6 +58,10 @@ type FreeboxMachineStatus struct {
 	// VMID stores the ID of the created Freebox virtual machine
 	// so it can be deleted when the FreeboxMachine is deleted.
 	VMID int64 `json:"vmID,omitempty"`
+
+	// DiskPath stores the path to the VM disk file
+	// so it can be deleted when the FreeboxMachine is deleted.
+	DiskPath string `json:"diskPath,omitempty"`
 }
 
 // +kubebuilder:object:root=true

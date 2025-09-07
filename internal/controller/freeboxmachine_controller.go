@@ -88,6 +88,26 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				logger.Info("VM deleted", "vmID", vmID)
 			}
 
+			// Delete associated disk files
+			diskPath := machine.Status.DiskPath
+			if diskPath != "" {
+				filesToDelete := []string{
+					diskPath,              // .raw file
+					diskPath + ".efivars", // .raw.efivars file
+				}
+
+				// Start file deletion task
+				deleteTask, err := r.FreeboxClient.RemoveFiles(ctx, filesToDelete)
+				if err != nil {
+					logger.Error(err, "Failed to start disk file deletion", "files", filesToDelete)
+					return ctrl.Result{}, err
+				}
+				logger.Info("Disk file deletion started", "taskID", deleteTask.ID, "files", filesToDelete)
+
+				// We don't wait for the deletion to complete since it's cleanup
+				// The files will be deleted asynchronously
+			}
+
 			// Remove finalizer
 			machine.Finalizers = removeString(machine.Finalizers, FreeboxMachineFinalizer)
 			if err := r.Update(ctx, &machine); err != nil {
@@ -317,9 +337,10 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			// -----------------------
 			// 5. Create VM
 			// -----------------------
+			diskPath := stripCompressionSuffix(imagePath)
 			vmPayload := freeboxTypes.VirtualMachinePayload{
 				Name:     machine.Name,
-				DiskPath: freeboxTypes.Base64Path(stripCompressionSuffix(imagePath)),
+				DiskPath: freeboxTypes.Base64Path(diskPath),
 				DiskType: freeboxTypes.RawDisk,
 				Memory:   machine.Spec.MemoryMB, // in MB
 				VCPUs:    machine.Spec.VCPUs,
@@ -334,8 +355,9 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 			logger.Info("VM created", "vmID", vm.ID)
 
-			// Store VM ID in status for deletion later
+			// Store VM ID and disk path in status for deletion later
 			machine.Status.VMID = vm.ID
+			machine.Status.DiskPath = diskPath
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    ConditionImageReady,
 				Status:  metav1.ConditionTrue,

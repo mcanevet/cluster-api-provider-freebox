@@ -51,7 +51,13 @@ var _ = Describe("FreeboxMachine Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: infrastructurev1alpha1.FreeboxMachineSpec{
+						Name:          "test-vm",
+						VCPUs:         2,
+						MemoryMB:      2048,
+						DiskSizeBytes: 20 * 1024 * 1024 * 1024, // 20GB
+						ImageURL:      "",                      // Empty URL to skip download logic in tests
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
