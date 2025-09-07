@@ -40,6 +40,8 @@ const (
 	ConditionImageReady    = "ImageReady"
 	ConditionVMProvisioned = "VMProvisioned"
 	ConditionReady         = "Ready"
+
+	FreeboxMachineFinalizer = "freeboxmachine.infrastructure.cluster.x-k8s.io/finalizer"
 )
 
 // FreeboxMachineReconciler reconciles a FreeboxMachine object
@@ -70,6 +72,37 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	var machine infrastructurev1alpha1.FreeboxMachine
 	if err := r.Get(ctx, req.NamespacedName, &machine); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// --- Handle deletion ---
+	if !machine.ObjectMeta.DeletionTimestamp.IsZero() {
+		if containsString(machine.Finalizers, FreeboxMachineFinalizer) {
+			logger.Info("Deleting VM because FreeboxMachine is being deleted")
+
+			vmID := machine.Status.VMID
+			if vmID != 0 {
+				if err := r.FreeboxClient.DeleteVirtualMachine(ctx, vmID); err != nil {
+					logger.Error(err, "Failed to delete VM")
+					return ctrl.Result{}, err
+				}
+				logger.Info("VM deleted", "vmID", vmID)
+			}
+
+			// Remove finalizer
+			machine.Finalizers = removeString(machine.Finalizers, FreeboxMachineFinalizer)
+			if err := r.Update(ctx, &machine); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// --- Ensure finalizer ---
+	if !containsString(machine.Finalizers, FreeboxMachineFinalizer) {
+		machine.Finalizers = append(machine.Finalizers, FreeboxMachineFinalizer)
+		if err := r.Update(ctx, &machine); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	imageURL := machine.Spec.ImageURL
@@ -143,7 +176,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					Message: fmt.Sprintf("phase=extract task_id=0 src=%s dst=%s", imagePath, destDir),
 				})
 			} else {
-				// Skip extraction → go directly to resize
 				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 					Type:    "ImagePhase",
 					Status:  metav1.ConditionFalse,
@@ -176,7 +208,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if phase == "extract" {
 		fmt.Sscanf(phaseCond.Message, "phase=extract task_id=%d src=%s dst=%s", &taskID, &srcPath, &dstPath)
 
-		// Start extraction if task_id == 0
 		if taskID == 0 {
 			fsPayload := freeboxTypes.ExtractFilePayload{
 				Src: freeboxTypes.Base64Path(srcPath),
@@ -200,7 +231,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 
-		// Wait for extraction to finish
 		fsTask, err := r.FreeboxClient.GetFileSystemTask(ctx, taskID)
 		if err != nil {
 			logger.Error(err, "Failed to get extraction task status")
@@ -239,7 +269,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		var diskPath string
 		fmt.Sscanf(phaseCond.Message, "phase=resize task_id=%d disk=%s", &taskID, &diskPath)
 
-		// Start resize if not started yet
 		if taskID == 0 {
 			resizePayload := freeboxTypes.VirtualDisksResizePayload{
 				DiskPath:    freeboxTypes.Base64Path(diskPath),
@@ -264,7 +293,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 
-		// Wait for resize to finish
 		resizeTask, err := r.FreeboxClient.GetVirtualDiskTask(ctx, taskID)
 		if err != nil {
 			logger.Error(err, "Failed to get resize task status")
@@ -293,7 +321,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Name:     machine.Name,
 				DiskPath: freeboxTypes.Base64Path(stripCompressionSuffix(imagePath)),
 				DiskType: freeboxTypes.RawDisk,
-				Memory:   machine.Spec.MemoryMB,
+				Memory:   machine.Spec.MemoryMB, // in MB
 				VCPUs:    machine.Spec.VCPUs,
 				OS:       freeboxTypes.UnknownOS,
 			}
@@ -306,6 +334,8 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 			logger.Info("VM created", "vmID", vm.ID)
 
+			// Store VM ID in status for deletion later
+			machine.Status.VMID = vm.ID
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    ConditionImageReady,
 				Status:  metav1.ConditionTrue,
@@ -326,7 +356,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	// If we reach here, we're done
 	return ctrl.Result{}, nil
 }
 
@@ -356,6 +385,25 @@ func stripCompressionSuffix(name string) string {
 		return strings.TrimSuffix(name, ext)
 	}
 	return name
+}
+
+func containsString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+func removeString(slice []string, s string) []string {
+	var result []string
+	for _, item := range slice {
+		if item != s {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 // SetupWithManager sets up the controller with the Manager.

@@ -55,10 +55,9 @@ type FreeboxMachineStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// ID of the VM in the Freebox
-	VMID string `json:"vmId,omitempty"`
-	// State of the VM (running, stopped, error, etc.)
-	State string `json:"state,omitempty"`
+	// VMID stores the ID of the created Freebox virtual machine
+	// so it can be deleted when the FreeboxMachine is deleted.
+	VMID int64 `json:"vmID,omitempty"`
 }
 
 // +kubebuilder:object:root=true

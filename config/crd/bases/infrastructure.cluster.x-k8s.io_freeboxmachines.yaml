@@ -138,12 +138,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              state:
-                description: State of the VM (running, stopped, error, etc.)
-                type: string
-              vmId:
-                description: ID of the VM in the Freebox
-                type: string
+              vmID:
+                description: |-
+                  VMID stores the ID of the created Freebox virtual machine
+                  so it can be deleted when the FreeboxMachine is deleted.
+                format: int64
+                type: integer
             type: object
         required:
         - spec
