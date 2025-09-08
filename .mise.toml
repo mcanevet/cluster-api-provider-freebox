@@ -1,0 +1,12 @@
+[env]
+# Commitable environment variables - safe to include in repository
+FREEBOX_ENDPOINT = "mafreebox.freebox.fr"
+FREEBOX_VERSION = "latest"
+
+[tools]
+go = "1.25.1"
+kubectl = "latest"
+clusterctl = "latest"
+golangci-lint = "latest"
+kubebuilder = "latest"
+kustomize = "latest"

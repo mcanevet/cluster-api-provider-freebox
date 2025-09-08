@@ -1,0 +1,5 @@
+[env]
+# Non-commitable sensitive environment variables
+# Copy this file to .mise.local.toml and set your actual credentials
+FREEBOX_APP_ID = "your-app-id-here"
+FREEBOX_TOKEN = "your-private-token-here"
