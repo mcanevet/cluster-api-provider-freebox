@@ -25,31 +25,75 @@ import (
 
 // FreeboxMachineSpec defines the desired state of FreeboxMachine
 type FreeboxMachineSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of FreeboxMachine. Edit freeboxmachine_types.go to remove/update
+	// VCPUs specifies the number of virtual CPUs for the VM
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=3
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	VCPUs int `json:"vcpus,omitempty"`
+
+	// Memory specifies the amount of memory for the VM in MB
+	// +kubebuilder:validation:Minimum=512
+	// +kubebuilder:validation:Maximum=15360
+	// +optional
+	Memory int `json:"memory,omitempty"`
+
+	// DiskSize specifies the disk size for the VM in GB
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	DiskSize int `json:"diskSize,omitempty"`
+
+	// CloudInit contains cloud-init configuration for the VM
+	// +optional
+	CloudInit *CloudInitSpec `json:"cloudInit,omitempty"`
+
+	// ProviderID is the unique identifier for the VM on the Freebox
+	// This field is set by the controller and should not be modified by users
+	// +optional
+	ProviderID *string `json:"providerID,omitempty"`
+}
+
+// CloudInitSpec defines cloud-init configuration
+type CloudInitSpec struct {
+	// UserData contains the user data for cloud-init
+	// +optional
+	UserData string `json:"userData,omitempty"`
+
+	// MetaData contains the meta data for cloud-init
+	// +optional
+	MetaData string `json:"metaData,omitempty"`
 }
 
 // FreeboxMachineStatus defines the observed state of FreeboxMachine.
 type FreeboxMachineStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// Ready indicates whether the machine is ready to be used
+	// +optional
+	Ready bool `json:"ready,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// Addresses contains the VM's IP addresses
+	// +optional
+	Addresses []string `json:"addresses,omitempty"`
+
+	// ProviderID is the unique identifier for the VM on the Freebox
+	// +optional
+	ProviderID *string `json:"providerID,omitempty"`
+
+	// VMState represents the current state of the VM (running, stopped, etc.)
+	// +optional
+	VMState string `json:"vmState,omitempty"`
+
+	// ErrorMessage contains error information if the machine is in an error state
+	// +optional
+	ErrorMessage string `json:"errorMessage,omitempty"`
 
 	// conditions represent the current state of the FreeboxMachine resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
 	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
+	// - "Ready": the resource is fully functional and VM is running
+	// - "VMCreated": the VM has been created on the Freebox
+	// - "VMStarted": the VM has been started
+	// - "InfrastructureReady": the infrastructure is ready for use
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
