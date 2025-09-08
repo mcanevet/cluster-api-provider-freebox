@@ -8,4 +8,23 @@ layout:
 - go.kubebuilder.io/v4
 projectName: cluster-api-provider-freebox
 repo: github.com/mcanevet/cluster-api-provider-freebox
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: cluster.x-k8s.io
+  group: infrastructure
+  kind: FreeboxCluster
+  path: github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: cluster.x-k8s.io
+  group: infrastructure
+  kind: FreeboxMachine
+  path: github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1
+  version: v1alpha1
 version: "3"
