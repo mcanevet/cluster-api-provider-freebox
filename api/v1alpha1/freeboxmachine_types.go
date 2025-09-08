@@ -111,5 +111,5 @@ type FreeboxMachineList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&FreeboxMachine{}, &FreeboxMachineList{})
+	objectTypes = append(objectTypes, &FreeboxMachine{}, &FreeboxMachineList{})
 }
