@@ -1,0 +1,146 @@
+{
+    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+    "extends": [
+        "config:recommended",
+        ":dependencyDashboard",
+        ":semanticPrefixFixDepsChoreOthers"
+    ],
+    "timezone": "Europe/Paris",
+    "schedule": [
+        "before 6am on monday"
+    ],
+    "labels": [
+        "dependencies"
+    ],
+    "assignees": [
+        "mcanevet"
+    ],
+    "reviewers": [
+        "mcanevet"
+    ],
+    "prConcurrentLimit": 5,
+    "prHourlyLimit": 2,
+    "semanticCommits": "enabled",
+    "commitMessagePrefix": "chore(deps):",
+    "commitMessageAction": "update",
+    "commitMessageTopic": "{{depName}}",
+    "commitMessageExtra": "to {{newVersion}}",
+    "rebaseWhen": "conflicted",
+    "packageRules": [
+        {
+            "description": "Group Go dependencies updates",
+            "matchManagers": [
+                "gomod"
+            ],
+            "groupName": "go dependencies",
+            "semanticCommitType": "chore",
+            "semanticCommitScope": "deps"
+        },
+        {
+            "description": "Auto-merge patch updates for well-known dependencies",
+            "matchUpdateTypes": [
+                "patch"
+            ],
+            "matchPackagePatterns": [
+                "^k8s.io/",
+                "^sigs.k8s.io/controller-runtime",
+                "^github.com/onsi/ginkgo",
+                "^github.com/onsi/gomega",
+                "^github.com/stretchr/testify"
+            ],
+            "automerge": true,
+            "automergeType": "pr"
+        },
+        {
+            "description": "Kubernetes API and controller-runtime - group and require approval",
+            "matchPackagePatterns": [
+                "^k8s.io/api",
+                "^k8s.io/apimachinery",
+                "^k8s.io/client-go",
+                "^sigs.k8s.io/controller-runtime",
+                "^sigs.k8s.io/cluster-api"
+            ],
+            "groupName": "kubernetes core",
+            "semanticCommitType": "feat",
+            "semanticCommitScope": "deps",
+            "automerge": false,
+            "reviewersFromCodeOwners": true
+        },
+        {
+            "description": "Freebox API client - require manual review",
+            "matchPackageNames": [
+                "github.com/freeboxlabs/free-go"
+            ],
+            "automerge": false,
+            "semanticCommitType": "feat",
+            "semanticCommitScope": "deps",
+            "reviewersFromCodeOwners": true
+        },
+        {
+            "description": "Major updates require manual review",
+            "matchUpdateTypes": [
+                "major"
+            ],
+            "automerge": false,
+            "semanticCommitType": "feat",
+            "semanticCommitScope": "deps"
+        },
+        {
+            "description": "Group GitHub Actions updates",
+            "matchManagers": [
+                "github-actions"
+            ],
+            "groupName": "github actions",
+            "semanticCommitType": "ci",
+            "semanticCommitScope": "deps",
+            "automerge": true,
+            "automergeType": "pr"
+        },
+        {
+            "description": "Pin GitHub Actions to specific SHA for security",
+            "matchManagers": [
+                "github-actions"
+            ],
+            "pinDigests": true
+        }
+    ],
+    "vulnerabilityAlerts": {
+        "enabled": true,
+        "semanticCommitType": "fix",
+        "semanticCommitScope": "security"
+    },
+    "osvVulnerabilityAlerts": true,
+    "separateMinorPatch": true,
+    "separateMajorMinor": true,
+    "separateMultipleMajor": true,
+    "rangeStrategy": "bump",
+    "postUpdateOptions": [
+        "gomodTidy"
+    ],
+    "customManagers": [
+        {
+            "customType": "regex",
+            "description": "Update Go version in mise configuration",
+            "fileMatch": [
+                "^\\.mise\\.toml$"
+            ],
+            "matchStrings": [
+                "go\\s*=\\s*[\"']?(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)[\"']?"
+            ],
+            "datasourceTemplate": "golang-version",
+            "depNameTemplate": "go"
+        },
+        {
+            "customType": "regex",
+            "description": "Update kubebuilder version in Makefile",
+            "fileMatch": [
+                "^Makefile$"
+            ],
+            "matchStrings": [
+                "KUBEBUILDER_VERSION\\s*\\?=\\s*(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+            ],
+            "datasourceTemplate": "github-releases",
+            "depNameTemplate": "kubernetes-sigs/kubebuilder"
+        }
+    ]
+}

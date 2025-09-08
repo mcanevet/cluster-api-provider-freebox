@@ -124,6 +124,7 @@ This is a Kubernetes Cluster API infrastructure provider for Freebox Delta virtu
 - **Semantic versioning** automatically determined from commit messages
 - **Changelogs** auto-generated from conventional commit history
 - **Docker images** automatically built and pushed to GitHub Container Registry
+- **Dependency management** via [Renovate Bot](https://github.com/renovatebot/renovate) with automated security updates
 - Update compatibility matrix in README for new releases
 - Ensure all tests pass before merging PRs
 
@@ -231,3 +232,28 @@ chore(deps): update controller-runtime to v0.21.0
 2. Write integration tests for VM creation before implementation
 3. Use TDD approach: test → implement → refactor cycle
 4. Focus on happy path first, then error scenarios
+
+## Dependency Management
+
+**Renovate Bot Configuration** (`.github/renovate.json`):
+
+- **Scheduled updates**: Weekly on Mondays before 6am (Europe/Paris timezone)
+- **Go dependencies**: Grouped updates with conventional commit messages
+- **Kubernetes APIs**: Manual review required for compatibility validation
+- **Security updates**: Automatic vulnerability detection and patching
+- **GitHub Actions**: Pinned to specific SHAs, auto-merged for security
+- **Tool versions**: Custom managers for Go (mise) and kubebuilder (Makefile)
+
+**Package Rules**:
+
+- Patch updates for well-known dependencies: Auto-merged
+- Major updates: Always require manual review
+- Kubernetes core (k8s.io/*, controller-runtime): Grouped, manual review
+- Freebox API client: Manual review required for API compatibility
+
+**Conventional Commits**: All dependency updates use semantic commit types:
+
+- `chore(deps):` for routine dependency updates
+- `feat(deps):` for major updates or new capabilities
+- `fix(security):` for vulnerability patches
+- `ci(deps):` for GitHub Actions updates

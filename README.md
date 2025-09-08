@@ -313,6 +313,23 @@ To trigger a release, simply merge conventional commits to the main branch. Rele
 2. Create a release PR with updated changelog
 3. Upon merge, create a GitHub release with built artifacts
 
+## Dependency Management
+
+This project uses **[Renovate Bot](https://github.com/renovatebot/renovate)** for automated dependency updates:
+
+- **Go dependencies** are grouped and updated with conventional commits
+- **Kubernetes APIs** require manual review for compatibility
+- **Security vulnerabilities** are automatically detected and fixed
+- **GitHub Actions** are pinned to specific SHAs for security
+- **Tool versions** (Go, kubebuilder) are tracked and updated
+
+Renovate runs weekly on Mondays and creates PRs with:
+
+- Semantic commit messages for proper changelog generation
+- Grouped updates to reduce PR noise
+- Auto-merge for safe patch updates
+- Manual review requirements for major changes
+
 ## Security
 
 This provider handles sensitive Freebox API credentials. Always:
