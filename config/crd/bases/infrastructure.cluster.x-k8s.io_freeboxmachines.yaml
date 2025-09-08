@@ -50,11 +50,13 @@ spec:
                     type: string
                 type: object
               diskSize:
+                default: 20
                 description: DiskSize specifies the disk size for the VM in GB
                 maximum: 100
                 minimum: 1
                 type: integer
               memory:
+                default: 2048
                 description: Memory specifies the amount of memory for the VM in MB
                 maximum: 15360
                 minimum: 512
@@ -65,6 +67,7 @@ spec:
                   This field is set by the controller and should not be modified by users
                 type: string
               vcpus:
+                default: 2
                 description: VCPUs specifies the number of virtual CPUs for the VM
                 maximum: 3
                 minimum: 1

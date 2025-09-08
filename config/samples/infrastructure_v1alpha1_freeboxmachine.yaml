@@ -6,4 +6,50 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: freeboxmachine-sample
 spec:
-  # TODO(user): Add fields here
+  # VM configuration
+  vcpus: 2
+  memory: 4096  # 4GB in MB
+  diskSize: 20  # 20GB
+
+  # Cloud-init configuration for Kubernetes node setup
+  cloudInit:
+    userData: |
+      #cloud-config
+      hostname: k8s-node-1
+      users:
+        - name: ubuntu
+          sudo: ALL=(ALL) NOPASSWD:ALL
+          shell: /bin/bash
+          ssh_authorized_keys:
+            - ssh-rsa AAAAB3NzaC1yc2E... # Add your SSH public key here
+
+      package_update: true
+      packages:
+        - curl
+        - wget
+        - apt-transport-https
+        - ca-certificates
+        - gnupg
+        - lsb-release
+
+      runcmd:
+        # Install Docker
+        - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+        - echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+        - apt-get update
+        - apt-get install -y docker-ce docker-ce-cli containerd.io
+
+        # Install kubeadm, kubelet, kubectl
+        - curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/kubernetes-archive-keyring.gpg
+        - echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | tee /etc/apt/sources.list.d/kubernetes.list
+        - apt-get update
+        - apt-get install -y kubelet kubeadm kubectl
+        - apt-mark hold kubelet kubeadm kubectl
+
+        # Configure containerd
+        - containerd config default | tee /etc/containerd/config.toml
+        - systemctl restart containerd
+        - systemctl enable containerd
+
+        # Enable kubelet
+        - systemctl enable kubelet

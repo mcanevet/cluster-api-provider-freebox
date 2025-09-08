@@ -28,18 +28,21 @@ type FreeboxMachineSpec struct {
 	// VCPUs specifies the number of virtual CPUs for the VM
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=3
+	// +kubebuilder:default=2
 	// +optional
 	VCPUs int `json:"vcpus,omitempty"`
 
 	// Memory specifies the amount of memory for the VM in MB
 	// +kubebuilder:validation:Minimum=512
 	// +kubebuilder:validation:Maximum=15360
+	// +kubebuilder:default=2048
 	// +optional
 	Memory int `json:"memory,omitempty"`
 
 	// DiskSize specifies the disk size for the VM in GB
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=20
 	// +optional
 	DiskSize int `json:"diskSize,omitempty"`
 
@@ -133,4 +136,44 @@ type FreeboxMachineList struct {
 
 func init() {
 	SchemeBuilder.Register(&FreeboxMachine{}, &FreeboxMachineList{})
+}
+
+// GetVCPUs returns the number of VCPUs, applying defaults if not specified
+func (m *FreeboxMachine) GetVCPUs() int {
+	if m.Spec.VCPUs == 0 {
+		return 2 // Default value
+	}
+	return m.Spec.VCPUs
+}
+
+// GetMemory returns the memory in MB, applying defaults if not specified
+func (m *FreeboxMachine) GetMemory() int {
+	if m.Spec.Memory == 0 {
+		return 2048 // Default 2GB
+	}
+	return m.Spec.Memory
+}
+
+// GetDiskSize returns the disk size in GB, applying defaults if not specified
+func (m *FreeboxMachine) GetDiskSize() int {
+	if m.Spec.DiskSize == 0 {
+		return 20 // Default 20GB
+	}
+	return m.Spec.DiskSize
+}
+
+// IsReady returns true if the machine is in a ready state
+func (m *FreeboxMachine) IsReady() bool {
+	return m.Status.Ready
+}
+
+// GetProviderID returns the provider ID if set
+func (m *FreeboxMachine) GetProviderID() string {
+	if m.Status.ProviderID != nil {
+		return *m.Status.ProviderID
+	}
+	if m.Spec.ProviderID != nil {
+		return *m.Spec.ProviderID
+	}
+	return ""
 }
