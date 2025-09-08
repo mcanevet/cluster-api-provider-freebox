@@ -39,10 +39,19 @@ spec:
           spec:
             description: spec defines the desired state of FreeboxCluster
             properties:
-              foo:
-                description: foo is an example field of FreeboxCluster. Edit freeboxcluster_types.go
-                  to remove/update
-                type: string
+              controlPlaneEndpoint:
+                description: |-
+                  ControlPlaneEndpoint represents the endpoint used to communicate with the control plane
+                  For single VM setup, this will be the VM's IP address
+                properties:
+                  host:
+                    description: Host is the hostname on which the API server is serving
+                    type: string
+                  port:
+                    description: Port is the port on which the API server is serving
+                    format: int32
+                    type: integer
+                type: object
             type: object
           status:
             description: status defines the observed state of FreeboxCluster
@@ -116,6 +125,18 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              initialization:
+                description: |-
+                  initialization provides observations of the FreeboxCluster initialization process.
+                  NOTE: Fields in this struct are part of the Cluster API contract and are used to orchestrate initial Cluster provisioning.
+                minProperties: 1
+                properties:
+                  provisioned:
+                    description: |-
+                      provisioned is true when the infrastructure provider reports that the Cluster's infrastructure is fully provisioned.
+                      NOTE: this field is part of the Cluster API contract, and it is used to orchestrate initial Cluster provisioning.
+                    type: boolean
+                type: object
             type: object
         required:
         - spec

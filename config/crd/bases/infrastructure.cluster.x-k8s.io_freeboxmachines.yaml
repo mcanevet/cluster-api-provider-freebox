@@ -39,9 +39,35 @@ spec:
           spec:
             description: spec defines the desired state of FreeboxMachine
             properties:
-              foo:
-                description: foo is an example field of FreeboxMachine. Edit freeboxmachine_types.go
-                  to remove/update
+              cpus:
+                default: 2
+                description: CPUs is the number of virtual CPUs for the virtual machine
+                format: int64
+                minimum: 1
+                type: integer
+              diskSize:
+                default: 20
+                description: DiskSize is the size of the disk in GB for the virtual
+                  machine
+                format: int64
+                minimum: 1
+                type: integer
+              imageURL:
+                description: ImageURL is the source URL of the nocloud image to use
+                  for the VM
+                minLength: 1
+                type: string
+              memory:
+                default: 2
+                description: Memory is the amount of memory in GB for the virtual
+                  machine
+                format: int64
+                minimum: 1
+                type: integer
+              providerID:
+                description: |-
+                  ProviderID must match the provider ID as seen on the node object corresponding to this machine.
+                  For Freebox VMs, this will be set to freebox:///<vm-id>
                 type: string
             type: object
           status:
@@ -116,6 +142,18 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              initialization:
+                description: |-
+                  initialization provides observations of the FreeboxMachine initialization process.
+                  NOTE: Fields in this struct are part of the Cluster API contract and are used to orchestrate initial Machine provisioning.
+                minProperties: 1
+                properties:
+                  provisioned:
+                    description: |-
+                      provisioned is true when the infrastructure provider reports that the Machine's infrastructure is fully provisioned.
+                      NOTE: this field is part of the Cluster API contract, and it is used to orchestrate initial Machine provisioning.
+                    type: boolean
+                type: object
             type: object
         required:
         - spec
