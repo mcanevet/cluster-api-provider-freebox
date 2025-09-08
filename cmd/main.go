@@ -19,7 +19,10 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
+
+	freeclient "github.com/nikolalohinski/free-go/client"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -50,6 +53,38 @@ func init() {
 
 	utilruntime.Must(infrastructurev1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
+}
+
+// createFreeboxClient creates and configures a Freebox API client
+func createFreeboxClient() (freeclient.Client, error) {
+	endpoint := os.Getenv("FREEBOX_ENDPOINT")
+	if endpoint == "" {
+		return nil, fmt.Errorf("FREEBOX_ENDPOINT environment variable is required")
+	}
+
+	version := os.Getenv("FREEBOX_VERSION")
+	if version == "" {
+		version = "latest"
+	}
+
+	appID := os.Getenv("FREEBOX_APP_ID")
+	if appID == "" {
+		return nil, fmt.Errorf("FREEBOX_APP_ID environment variable is required")
+	}
+
+	token := os.Getenv("FREEBOX_TOKEN")
+	if token == "" {
+		return nil, fmt.Errorf("FREEBOX_TOKEN environment variable is required")
+	}
+
+	// Create Freebox client
+	fbClient, err := freeclient.New(endpoint, version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Freebox client: %w", err)
+	}
+
+	// Configure authentication
+	return fbClient.WithAppID(appID).WithPrivateToken(token), nil
 }
 
 // nolint:gocyclo
@@ -178,6 +213,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create Freebox client
+	freeboxClient, err := createFreeboxClient()
+	if err != nil {
+		setupLog.Error(err, "unable to create Freebox client")
+		os.Exit(1)
+	}
+
 	if err := (&controller.FreeboxClusterReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -186,8 +228,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.FreeboxMachineReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		FreeboxClient: freeboxClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FreeboxMachine")
 		os.Exit(1)
