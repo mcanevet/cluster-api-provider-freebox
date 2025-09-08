@@ -41,30 +41,30 @@
             "matchUpdateTypes": [
                 "patch"
             ],
-            "matchPackagePatterns": [
-                "^k8s.io/",
-                "^sigs.k8s.io/controller-runtime",
-                "^github.com/onsi/ginkgo",
-                "^github.com/onsi/gomega",
-                "^github.com/stretchr/testify"
-            ],
             "automerge": true,
-            "automergeType": "pr"
+            "automergeType": "pr",
+            "matchPackageNames": [
+                "/^k8s.io//",
+                "/^sigs.k8s.io/controller-runtime/",
+                "/^github.com/onsi/ginkgo/",
+                "/^github.com/onsi/gomega/",
+                "/^github.com/stretchr/testify/"
+            ]
         },
         {
             "description": "Kubernetes API and controller-runtime - group and require approval",
-            "matchPackagePatterns": [
-                "^k8s.io/api",
-                "^k8s.io/apimachinery",
-                "^k8s.io/client-go",
-                "^sigs.k8s.io/controller-runtime",
-                "^sigs.k8s.io/cluster-api"
-            ],
             "groupName": "kubernetes core",
             "semanticCommitType": "feat",
             "semanticCommitScope": "deps",
             "automerge": false,
-            "reviewersFromCodeOwners": true
+            "reviewersFromCodeOwners": true,
+            "matchPackageNames": [
+                "/^k8s.io/api/",
+                "/^k8s.io/apimachinery/",
+                "/^k8s.io/client-go/",
+                "/^sigs.k8s.io/controller-runtime/",
+                "/^sigs.k8s.io/cluster-api/"
+            ]
         },
         {
             "description": "Freebox API client - require manual review",
@@ -121,8 +121,8 @@
         {
             "customType": "regex",
             "description": "Update Go version in mise configuration",
-            "fileMatch": [
-                "^\\.mise\\.toml$"
+            "managerFilePatterns": [
+                "/^\\.mise\\.toml$/"
             ],
             "matchStrings": [
                 "go\\s*=\\s*[\"']?(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)[\"']?"
@@ -133,8 +133,8 @@
         {
             "customType": "regex",
             "description": "Update kubebuilder version in Makefile",
-            "fileMatch": [
-                "^Makefile$"
+            "managerFilePatterns": [
+                "/^Makefile$/"
             ],
             "matchStrings": [
                 "KUBEBUILDER_VERSION\\s*\\?=\\s*(?<currentValue>\\d+\\.\\d+\\.\\d+)"
