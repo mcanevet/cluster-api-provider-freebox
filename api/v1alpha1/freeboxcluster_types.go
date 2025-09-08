@@ -25,23 +25,29 @@ import (
 
 // FreeboxClusterSpec defines the desired state of FreeboxCluster
 type FreeboxClusterSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of FreeboxCluster. Edit freeboxcluster_types.go to remove/update
+	// ControlPlaneEndpoint represents the endpoint used to communicate with the control plane
+	// For single VM setup, this will be the VM's IP address
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	ControlPlaneEndpoint APIEndpoint `json:"controlPlaneEndpoint,omitempty"`
 }
 
-// FreeboxClusterStatus defines the observed state of FreeboxCluster.
-type FreeboxClusterStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+// APIEndpoint represents a reachable Kubernetes API endpoint
+type APIEndpoint struct {
+	// Host is the hostname on which the API server is serving
+	// +optional
+	Host string `json:"host,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// Port is the port on which the API server is serving
+	// +optional
+	Port int32 `json:"port,omitempty"`
+}
+
+// FreeboxClusterStatus defines the observed state of FreeboxCluster
+type FreeboxClusterStatus struct {
+	// initialization provides observations of the FreeboxCluster initialization process.
+	// NOTE: Fields in this struct are part of the Cluster API contract and are used to orchestrate initial Cluster provisioning.
+	// +optional
+	Initialization *FreeboxClusterInitializationStatus `json:"initialization,omitempty"`
 
 	// conditions represent the current state of the FreeboxCluster resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
@@ -56,6 +62,15 @@ type FreeboxClusterStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// FreeboxClusterInitializationStatus provides observations of the FreeboxCluster initialization process.
+// +kubebuilder:validation:MinProperties=1
+type FreeboxClusterInitializationStatus struct {
+	// provisioned is true when the infrastructure provider reports that the Cluster's infrastructure is fully provisioned.
+	// NOTE: this field is part of the Cluster API contract, and it is used to orchestrate initial Cluster provisioning.
+	// +optional
+	Provisioned *bool `json:"provisioned,omitempty"`
 }
 
 // +kubebuilder:object:root=true

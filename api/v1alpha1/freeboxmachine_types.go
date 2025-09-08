@@ -25,23 +25,37 @@ import (
 
 // FreeboxMachineSpec defines the desired state of FreeboxMachine
 type FreeboxMachineSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of FreeboxMachine. Edit freeboxmachine_types.go to remove/update
+	// ProviderID must match the provider ID as seen on the node object corresponding to this machine.
+	// For Freebox VMs, this will be set to freebox:///<vm-id>
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	ProviderID string `json:"providerID,omitempty"`
+
+	// CPUs is the number of virtual CPUs for the virtual machine
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=2
+	CPUs int64 `json:"cpus,omitempty"`
+
+	// Memory is the amount of memory in GB for the virtual machine
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=2
+	Memory int64 `json:"memory,omitempty"`
+
+	// DiskSize is the size of the disk in GB for the virtual machine
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=20
+	DiskSize int64 `json:"diskSize,omitempty"`
+
+	// ImageURL is the source URL of the nocloud image to use for the VM
+	// +kubebuilder:validation:MinLength=1
+	ImageURL string `json:"imageURL,omitempty"`
 }
 
-// FreeboxMachineStatus defines the observed state of FreeboxMachine.
+// FreeboxMachineStatus defines the observed state of FreeboxMachine
 type FreeboxMachineStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// initialization provides observations of the FreeboxMachine initialization process.
+	// NOTE: Fields in this struct are part of the Cluster API contract and are used to orchestrate initial Machine provisioning.
+	// +optional
+	Initialization *FreeboxMachineInitializationStatus `json:"initialization,omitempty"`
 
 	// conditions represent the current state of the FreeboxMachine resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
@@ -56,6 +70,15 @@ type FreeboxMachineStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// FreeboxMachineInitializationStatus provides observations of the FreeboxMachine initialization process.
+// +kubebuilder:validation:MinProperties=1
+type FreeboxMachineInitializationStatus struct {
+	// provisioned is true when the infrastructure provider reports that the Machine's infrastructure is fully provisioned.
+	// NOTE: this field is part of the Cluster API contract, and it is used to orchestrate initial Machine provisioning.
+	// +optional
+	Provisioned *bool `json:"provisioned,omitempty"`
 }
 
 // +kubebuilder:object:root=true
