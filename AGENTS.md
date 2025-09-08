@@ -120,7 +120,10 @@ This is a Kubernetes Cluster API infrastructure provider for Freebox Delta virtu
 
 - Use `make build` for local builds
 - Use `make docker-build` for container images
-- Follow semantic versioning for releases
+- **Automated releases** via [Release Please](https://github.com/googleapis/release-please) based on conventional commits
+- **Semantic versioning** automatically determined from commit messages
+- **Changelogs** auto-generated from conventional commit history
+- **Docker images** automatically built and pushed to GitHub Container Registry
 - Update compatibility matrix in README for new releases
 - Ensure all tests pass before merging PRs
 

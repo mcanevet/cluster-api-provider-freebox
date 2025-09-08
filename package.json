@@ -1,0 +1,18 @@
+{
+    "name": "cluster-api-provider-freebox",
+    "version": "0.1.0",
+    "description": "Cluster API infrastructure provider for Freebox Delta virtual machines",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/mcanevet/cluster-api-provider-freebox.git"
+    },
+    "keywords": [
+        "kubernetes",
+        "cluster-api",
+        "freebox",
+        "infrastructure-provider",
+        "virtualization"
+    ],
+    "author": "Mickaël Canévet",
+    "license": "Apache-2.0"
+}

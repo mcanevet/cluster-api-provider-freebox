@@ -297,6 +297,22 @@ Use conventional commits for all changes:
 
 For detailed guidelines, see [AGENTS.md](AGENTS.md).
 
+## Releases
+
+This project uses automated release management:
+
+- **[Release Please](https://github.com/googleapis/release-please)** automatically creates releases based on conventional commits
+- **Semantic versioning** is determined from commit message types
+- **Changelogs** are auto-generated from the commit history
+- **Docker images** are built and published to GitHub Container Registry
+- **Release artifacts** include manifests and installation scripts
+
+To trigger a release, simply merge conventional commits to the main branch. Release Please will automatically:
+
+1. Determine the next version number
+2. Create a release PR with updated changelog
+3. Upon merge, create a GitHub release with built artifacts
+
 ## Security
 
 This provider handles sensitive Freebox API credentials. Always:

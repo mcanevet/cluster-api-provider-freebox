@@ -1,0 +1,89 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/release-please-action@v4
+        id: release
+        with:
+          # This specifies which files to consider when determining version bumps
+          config-file: .github/release-please-config.json
+          manifest-file: .github/.release-please-manifest.json
+
+      # The logic below handles post-release actions
+      - name: Checkout
+        if: ${{ steps.release.outputs.release_created }}
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        if: ${{ steps.release.outputs.release_created }}
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup mise
+        if: ${{ steps.release.outputs.release_created }}
+        uses: jdx/mise-action@v2
+        with:
+          version: latest
+
+      - name: Build and test
+        if: ${{ steps.release.outputs.release_created }}
+        run: |
+          make test
+          make build
+
+      - name: Build Docker image
+        if: ${{ steps.release.outputs.release_created }}
+        run: |
+          make docker-build IMG=ghcr.io/${{ github.repository }}:${{ steps.release.outputs.tag_name }}
+
+      - name: Login to GitHub Container Registry
+        if: ${{ steps.release.outputs.release_created }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Docker image
+        if: ${{ steps.release.outputs.release_created }}
+        run: |
+          docker push ghcr.io/${{ github.repository }}:${{ steps.release.outputs.tag_name }}
+          docker tag ghcr.io/${{ github.repository }}:${{ steps.release.outputs.tag_name }} ghcr.io/${{ github.repository }}:latest
+          docker push ghcr.io/${{ github.repository }}:latest
+
+      - name: Generate release artifacts
+        if: ${{ steps.release.outputs.release_created }}
+        run: |
+          mkdir -p dist
+          make manifests
+          # Package CRDs and samples
+          tar -czf dist/cluster-api-provider-freebox-${{ steps.release.outputs.tag_name }}-manifests.tar.gz config/
+          # Create installation script
+          cat > dist/install.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          echo "Installing Cluster API Provider Freebox ${{ steps.release.outputs.tag_name }}"
+          kubectl apply -f https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.tag_name }}/cluster-api-provider-freebox-${{ steps.release.outputs.tag_name }}-manifests.tar.gz
+          EOF
+          chmod +x dist/install.sh
+
+      - name: Upload release artifacts
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ steps.release.outputs.tag_name }} dist/*
