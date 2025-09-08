@@ -6,6 +6,26 @@ A [Cluster API](https://cluster-api.sigs.k8s.io/) infrastructure provider for ma
 
 This provider enables you to use your Freebox Delta as infrastructure for running Kubernetes clusters through Cluster API. It leverages the Freebox's built-in virtualization capabilities to create and manage virtual machines that serve as Kubernetes nodes.
 
+## Project Status
+
+🚧 **Under Active Development** - This project is currently being developed using Test-Driven Development (TDD) practices.
+
+### Current State
+
+- ✅ **Project scaffolding** complete with kubebuilder
+- ✅ **API types** defined (`FreeboxCluster` and `FreeboxMachine` v1alpha1)
+- ✅ **Integration tests** working against real Freebox hardware
+- ✅ **Freebox connectivity** verified with VM permissions
+- 🔄 **Controllers** scaffolded, implementation in progress
+- 🔄 **CRD validation** and webhook development
+- 🔄 **Cluster lifecycle** management
+
+### Verified Capabilities
+
+- ✅ Freebox API authentication and authorization
+- ✅ VM resource management (tested with 3 CPUs, 15GB RAM, 4 SATA ports)
+- ✅ Virtual machine listing and inspection
+
 ## Features
 
 - **VM Lifecycle Management**: Create, update, and delete virtual machines on Freebox Delta
@@ -16,11 +36,18 @@ This provider enables you to use your Freebox Delta as infrastructure for runnin
 
 ## Prerequisites
 
+### For Users
+
 - Freebox Delta or compatible model with virtualization support
 - Freebox OS v4.2+ (API v8+)
-- Go 1.21+ for development
 - kubectl and clusterctl for cluster management
-- mise for tool and environment management
+
+### For Development
+
+- Go 1.24+ (managed via mise)
+- [mise](https://mise.jdx.dev/) for tool and environment management
+- kubebuilder for API scaffolding
+- Access to a Freebox with VM capabilities for integration testing
 
 ## Quick Start
 
@@ -87,12 +114,15 @@ This project uses [mise](https://mise.jdx.dev/) for tool and environment managem
 ```toml
 [env]
 FREEBOX_ENDPOINT = "mafreebox.freebox.fr"
-FREEBOX_VERSION = "v10"
+FREEBOX_VERSION = "latest"
 
 [tools]
-go = "1.21"
+go = "1.25.1"
 kubectl = "latest"
 clusterctl = "latest"
+kubebuilder = "latest"
+kustomize = "latest"
+golangci-lint = "latest"
 ```
 
 **`.mise.local.toml`** (not commitable - sensitive credentials):
@@ -135,48 +165,78 @@ spec:
 
 ## Development
 
+This project follows Test-Driven Development (TDD) practices with integration tests running against real Freebox hardware.
+
 ### Setup Development Environment
-
-```bash
-# Install mise if not already installed
-curl https://mise.run | sh
-
-# Install tools and set up environment
-mise install
-mise trust
-
-# Verify setup
-mise current
-```
-
-### Building from Source
 
 ```bash
 # Clone the repository
 git clone https://github.com/mcanevet/cluster-api-provider-freebox.git
 cd cluster-api-provider-freebox
 
-# Build the provider
-make build
+# Install tools and set up environment
+mise install
+mise trust
 
-# Run tests
+# Set up your Freebox credentials
+cp .mise.local.toml.example .mise.local.toml
+# Edit .mise.local.toml with your actual Freebox credentials
+
+# Verify setup
+mise current
+```
+
+### TDD Workflow
+
+```bash
+# Run unit tests
 make test
 
-# Build and load Docker image for development
-make docker-build
+# Run integration tests (requires Freebox credentials)
+make test-integration
+
+# Run linting
+make lint
+
+# Build the project
+make build
+
+# Generate manifests and code
+make manifests generate
+```
+
+### Project Structure
+
+```text
+├── api/v1alpha1/              # CRD definitions
+│   ├── freeboxcluster_types.go
+│   └── freeboxmachine_types.go
+├── internal/controller/       # Reconciler logic
+│   ├── freeboxcluster_controller.go
+│   └── freeboxmachine_controller.go
+├── test/integration/          # Integration tests against real Freebox
+│   └── freebox_test.go
+├── config/                    # Kubernetes manifests
+│   ├── crd/bases/             # Generated CRDs
+│   ├── rbac/                  # RBAC roles
+│   └── samples/               # Example resources
+└── cmd/                       # Main application entry point
 ```
 
 ### Running Tests
 
 ```bash
-# Unit tests
+# Unit tests only
 make test
 
-# Integration tests (requires Freebox credentials)
+# Integration tests (requires FREEBOX_* environment variables)
 make test-integration
 
 # E2E tests
 make test-e2e
+
+# Test coverage
+make test && go tool cover -html=cover.out
 ```
 
 ## Architecture
@@ -214,16 +274,28 @@ export LOG_LEVEL=debug
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions! This project follows [Conventional Commits](https://www.conventionalcommits.org/) for consistent commit messages and uses Test-Driven Development (TDD) practices.
 
 ### Development Workflow
 
 1. Fork the repository
 2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Run the full test suite
-6. Submit a pull request
+3. Make your changes following TDD practices
+4. Use conventional commit messages (e.g., `feat(controller): add VM lifecycle management`)
+5. Add tests for new functionality
+6. Run the full test suite (`make test test-integration`)
+7. Submit a pull request
+
+### Commit Message Format
+
+Use conventional commits for all changes:
+
+- `feat(scope): description` for new features
+- `fix(scope): description` for bug fixes
+- `docs: description` for documentation changes
+- `test(scope): description` for test additions/changes
+
+For detailed guidelines, see [AGENTS.md](AGENTS.md).
 
 ## Security
 
