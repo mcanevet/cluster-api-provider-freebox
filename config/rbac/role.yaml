@@ -9,6 +9,7 @@ rules:
   resources:
   - clusters
   - clusters/status
+  - machines
   verbs:
   - get
   - list

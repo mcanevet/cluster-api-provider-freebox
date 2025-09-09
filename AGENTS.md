@@ -74,6 +74,19 @@ Creating a Cluster API infrastructure provider for Freebox following the officia
 - Implement only mandatory contract fields
 - Defer optional fields until proven necessary
 
+### VM Provisioning Workflow (Freebox Specific)
+
+**FreeboxMachine Controller Implementation Steps:**
+
+1. **Download Image**: Fetch VM image from spec.imageURL
+2. **Extract Image**: Optionally extract if compressed (tar.gz, zip, xz, etc.)
+3. **Resize Disk**: Resize image to match spec.diskSize (using qemu-img or similar)
+4. **Create VM**: Create VM definition on Freebox with specified CPU/Memory
+5. **Start VM**: Power on the VM and wait for boot
+6. **Update Status**: Set initialization.provisioned=true and providerID
+
+**Error Handling**: Each step should be idempotent and resumable on failure.
+
 ### Dependency Management
 
 - Minimize external dependencies in API packages
