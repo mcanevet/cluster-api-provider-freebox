@@ -19,10 +19,14 @@ package controller
 import (
 	"context"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/klog/v2"
+	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/patch"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
 )
@@ -36,6 +40,7 @@ type FreeboxClusterReconciler struct {
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=freeboxclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=freeboxclusters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=freeboxclusters/finalizers,verbs=update
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/status,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -46,11 +51,64 @@ type FreeboxClusterReconciler struct {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
-func (r *FreeboxClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+func (r *FreeboxClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, rerr error) {
+	log := log.FromContext(ctx)
 
-	// TODO(user): your logic here
+	// Fetch the FreeboxCluster instance
+	freeboxCluster := &infrastructurev1alpha1.FreeboxCluster{}
+	if err := r.Get(ctx, req.NamespacedName, freeboxCluster); err != nil {
+		if errors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
 
+	// Fetch the Cluster if it exists (optional for minimal setup)
+	cluster, err := util.GetOwnerCluster(ctx, r.Client, freeboxCluster.ObjectMeta)
+	if err != nil {
+		log.Error(err, "Failed to get owner cluster")
+		// Continue without owner cluster for minimal setup
+	}
+	if cluster != nil {
+		log = log.WithValues("Cluster", klog.KObj(cluster))
+		ctx = ctrl.LoggerInto(ctx, log)
+	}
+
+	// Initialize the patch helper
+	patchHelper, err := patch.NewHelper(freeboxCluster, r.Client)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Always attempt to Patch the FreeboxCluster object and status after each reconciliation.
+	defer func() {
+		if err := patchHelper.Patch(ctx, freeboxCluster); err != nil {
+			log.Error(err, "Failed to patch FreeboxCluster")
+			if rerr == nil {
+				rerr = err
+			}
+		}
+	}()
+
+	// Check if already provisioned (idempotency)
+	if freeboxCluster.Status.Initialization != nil &&
+		freeboxCluster.Status.Initialization.Provisioned != nil &&
+		*freeboxCluster.Status.Initialization.Provisioned {
+		log.Info("FreeboxCluster already provisioned, skipping reconciliation")
+		return ctrl.Result{}, nil
+	}
+
+	// For a minimal single VM setup, we just mark the infrastructure as ready
+	log.Info("Marking FreeboxCluster as provisioned")
+
+	// Set initialization.provisioned to true
+	provisioned := true
+	if freeboxCluster.Status.Initialization == nil {
+		freeboxCluster.Status.Initialization = &infrastructurev1alpha1.FreeboxClusterInitializationStatus{}
+	}
+	freeboxCluster.Status.Initialization.Provisioned = &provisioned
+
+	log.Info("Successfully marked FreeboxCluster as provisioned")
 	return ctrl.Result{}, nil
 }
 
