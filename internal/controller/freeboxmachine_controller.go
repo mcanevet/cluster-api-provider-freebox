@@ -30,12 +30,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
+	freebox "github.com/nikolalohinski/free-go/client"
 )
 
 // FreeboxMachineReconciler reconciles a FreeboxMachine object
 type FreeboxMachineReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// FreeboxClient provides access to Freebox API operations
+	FreeboxClient freebox.Client
 }
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=freeboxmachines,verbs=get;list;watch;create;update;patch;delete
@@ -100,14 +104,22 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
+	// Ensure we have a Freebox client
+	if r.FreeboxClient == nil {
+		return ctrl.Result{}, fmt.Errorf("FreeboxClient is not initialized")
+	}
+
 	// For minimal setup, simulate VM provisioning workflow
 	log.Info("Provisioning FreeboxMachine", "imageURL", freeboxMachine.Spec.ImageURL)
 
-	// Simulate the VM provisioning steps from AGENTS.md:
+	// Implement the VM provisioning steps from AGENTS.md:
 	// 1. Download image, 2. Extract, 3. Resize, 4. Create VM, 5. Start VM
-	// For now, we'll just mark as provisioned with a simulated provider ID
 
-	// Generate a unique provider ID (simulate VM creation)
+	// Step 1: Download image (first implementation)
+	if err := r.downloadImage(ctx, freeboxMachine); err != nil {
+		log.Error(err, "Failed to download VM image")
+		return ctrl.Result{}, err
+	} // Generate a unique provider ID (simulate VM creation)
 	if freeboxMachine.Spec.ProviderID == "" {
 		vmID := fmt.Sprintf("vm-%s", freeboxMachine.Name)
 		freeboxMachine.Spec.ProviderID = fmt.Sprintf("freebox:///%s", vmID)
@@ -131,4 +143,32 @@ func (r *FreeboxMachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&infrastructurev1alpha1.FreeboxMachine{}).
 		Named("freeboxmachine").
 		Complete(r)
+}
+
+// downloadImage implements step 1 of the VM provisioning workflow
+func (r *FreeboxMachineReconciler) downloadImage(ctx context.Context, machine *infrastructurev1alpha1.FreeboxMachine) error {
+	log := log.FromContext(ctx)
+
+	// For now, we'll simulate the download and log the operation
+	// TODO: Implement actual image download to Freebox storage
+	log.Info("Downloading VM image",
+		"imageURL", machine.Spec.ImageURL,
+		"vmName", machine.Name,
+		"diskSize", machine.Spec.DiskSize,
+	)
+
+	// Validate image URL format
+	if machine.Spec.ImageURL == "" {
+		return fmt.Errorf("imageURL cannot be empty")
+	}
+
+	// TODO: Add actual Freebox API calls for image download
+	// This would involve:
+	// 1. Check if image already exists in Freebox storage
+	// 2. If not, initiate download from imageURL
+	// 3. Monitor download progress
+	// 4. Validate downloaded image
+
+	log.Info("Image download completed (simulated)", "imageURL", machine.Spec.ImageURL)
+	return nil
 }
