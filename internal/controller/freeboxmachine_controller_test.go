@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
+	freebox "github.com/nikolalohinski/free-go/client"
 )
 
 var _ = Describe("FreeboxMachine Controller", func() {
@@ -44,13 +45,19 @@ var _ = Describe("FreeboxMachine Controller", func() {
 		Context("When FreeboxMachine does not exist", func() {
 			It("should handle not found gracefully", func() {
 				By("setting up the controller reconciler")
+
+				// Create mock client for testing
+				mockClient, err := freebox.New("http://mock.freebox.fr", "v4")
+				Expect(err).NotTo(HaveOccurred())
+
 				controllerReconciler := &FreeboxMachineReconciler{
-					Client: k8sClient,
-					Scheme: k8sClient.Scheme(),
+					Client:        k8sClient,
+					Scheme:        k8sClient.Scheme(),
+					FreeboxClient: mockClient,
 				}
 
 				// Try to reconcile a non-existent resource
-				_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: types.NamespacedName{
 						Name:      "non-existent",
 						Namespace: resourceNamespace,
@@ -66,9 +73,15 @@ var _ = Describe("FreeboxMachine Controller", func() {
 
 			BeforeEach(func() {
 				By("setting up the controller reconciler")
+
+				// Create mock client for testing
+				mockClient, err := freebox.New("http://mock.freebox.fr", "v4")
+				Expect(err).NotTo(HaveOccurred())
+
 				controllerReconciler = &FreeboxMachineReconciler{
-					Client: k8sClient,
-					Scheme: k8sClient.Scheme(),
+					Client:        k8sClient,
+					Scheme:        k8sClient.Scheme(),
+					FreeboxClient: mockClient,
 				}
 
 				By("creating a FreeboxMachine resource")
@@ -168,6 +181,77 @@ var _ = Describe("FreeboxMachine Controller", func() {
 				Expect(updatedMachine.Spec.Memory).To(Equal(int64(4)))
 				Expect(updatedMachine.Spec.DiskSize).To(Equal(int64(20)))
 				Expect(updatedMachine.Spec.ImageURL).To(ContainSubstring("ubuntu-22.04"))
+			})
+		})
+
+		Context("When FreeboxMachine integrates with Freebox API", func() {
+			var freeboxMachine *infrastructurev1alpha1.FreeboxMachine
+			var controllerReconciler *FreeboxMachineReconciler
+
+			BeforeEach(func() {
+				By("setting up the controller reconciler with Freebox client")
+
+				// Create mock client for testing
+				mockClient, err := freebox.New("http://mock.freebox.fr", "v4")
+				Expect(err).NotTo(HaveOccurred())
+
+				controllerReconciler = &FreeboxMachineReconciler{
+					Client:        k8sClient,
+					Scheme:        k8sClient.Scheme(),
+					FreeboxClient: mockClient,
+				}
+
+				By("creating a FreeboxMachine resource for API testing")
+				freeboxMachine = &infrastructurev1alpha1.FreeboxMachine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      resourceName + "-api",
+						Namespace: resourceNamespace,
+					},
+					Spec: infrastructurev1alpha1.FreeboxMachineSpec{
+						CPUs:     1,
+						Memory:   1,
+						DiskSize: 10,
+						ImageURL: "https://cloud-images.ubuntu.com/minimal/releases/22.04/release/ubuntu-22.04-minimal-cloudimg-amd64.img",
+					},
+				}
+				Expect(k8sClient.Create(ctx, freeboxMachine)).To(Succeed())
+			})
+
+			AfterEach(func() {
+				By("cleaning up the API test FreeboxMachine resource")
+				resource := &infrastructurev1alpha1.FreeboxMachine{}
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      resourceName + "-api",
+					Namespace: resourceNamespace,
+				}, resource)
+				if err == nil {
+					Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+				}
+			})
+
+			It("should connect to Freebox API (integration test)", func() {
+				Skip("Integration test - requires real Freebox connection")
+				// This test will be enabled once we have Freebox client integration
+
+				By("reconciling the FreeboxMachine with API calls")
+				_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Name:      resourceName + "-api",
+						Namespace: resourceNamespace,
+					},
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("verifying real provider ID from Freebox")
+				updatedMachine := &infrastructurev1alpha1.FreeboxMachine{}
+				Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      resourceName + "-api",
+					Namespace: resourceNamespace,
+				}, updatedMachine)).To(Succeed())
+
+				Expect(updatedMachine.Spec.ProviderID).To(HavePrefix("freebox:///"))
+				Expect(updatedMachine.Status.Initialization.Provisioned).NotTo(BeNil())
+				Expect(*updatedMachine.Status.Initialization.Provisioned).To(BeTrue())
 			})
 		})
 	})

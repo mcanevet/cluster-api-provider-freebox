@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -37,6 +38,8 @@ import (
 
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
 	"github.com/mcanevet/cluster-api-provider-freebox/internal/controller"
+	freebox "github.com/nikolalohinski/free-go/client"
+	"github.com/nikolalohinski/free-go/types"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -178,6 +181,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize Freebox client
+	freeboxClient, err := initializeFreeboxClient()
+	if err != nil {
+		setupLog.Error(err, "Failed to initialize Freebox client")
+		os.Exit(1)
+	}
+
 	if err := (&controller.FreeboxClusterReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -186,8 +196,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.FreeboxMachineReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		FreeboxClient: freeboxClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FreeboxMachine")
 		os.Exit(1)
@@ -208,4 +219,35 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// initializeFreeboxClient creates a new Freebox client using environment variables
+func initializeFreeboxClient() (freebox.Client, error) {
+	endpoint := os.Getenv("FREEBOX_ENDPOINT")
+	appID := os.Getenv("FREEBOX_APP_ID")
+	token := os.Getenv("FREEBOX_TOKEN")
+	version := os.Getenv("FREEBOX_VERSION")
+
+	if endpoint == "" {
+		return nil, fmt.Errorf("missing required Freebox environment variable: FREEBOX_ENDPOINT")
+	}
+
+	if version == "" {
+		version = "v4"
+	}
+
+	client, err := freebox.New(endpoint, version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Freebox client: %w", err)
+	}
+
+	// Configure client with app ID and token if provided
+	if appID != "" {
+		client = client.WithAppID(appID)
+	}
+	if token != "" {
+		client = client.WithPrivateToken(types.PrivateToken(token))
+	}
+
+	return client, nil
 }
