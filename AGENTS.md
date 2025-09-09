@@ -32,6 +32,8 @@
 - Focus on testing business logic, not simple data structures
 - Skip tests for API types unless they contain complex validation logic
 - Test controllers where the real business logic lives
+- **Always use Makefile targets to run tests** (e.g., `make test`, `make test-e2e`) for consistency and proper environment setup
+- **Follow Cluster API E2E testing framework** for integration tests using proper config files, cluster templates, and the official test framework
 
 ### Version Management
 
@@ -57,6 +59,25 @@ Creating a Cluster API infrastructure provider for Freebox following the officia
 - Minimal dependencies and complexity
 - Contract compliance with Cluster API v1beta2
 - Integration with free-go library for Freebox API access
+- Environment variable configuration following Cluster API conventions
+
+### Required Environment Variables
+
+The controller requires the following environment variables to be set for deployment:
+
+- `FREEBOX_ENDPOINT` (required): The Freebox API endpoint URL (e.g., `http://mafreebox.freebox.fr`)
+- `FREEBOX_APP_ID` (optional): Application ID for Freebox API authentication
+- `FREEBOX_TOKEN` (optional): Private token for Freebox API authentication
+- `FREEBOX_VERSION` (optional): API version, defaults to "v4"
+
+For E2E testing, these can be set to mock values:
+
+```bash
+export FREEBOX_ENDPOINT="http://freebox-mock.local"
+export FREEBOX_APP_ID="cluster-api-provider-freebox"
+export FREEBOX_TOKEN="mock-token-for-testing"
+export FREEBOX_VERSION="v4"
+```
 
 ### Architecture Decisions Made
 
@@ -73,6 +94,11 @@ Creating a Cluster API infrastructure provider for Freebox following the officia
 - Use minimal field sets focused on actual needs
 - Implement only mandatory contract fields
 - Defer optional fields until proven necessary
+
+**Important Version Note**: Current implementation uses v1alpha1 for local API types, but imports should use Cluster API v1beta2 (latest stable) for core types like `clusterv1.Cluster`. The package paths are:
+
+- Local API: `github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1`
+- Cluster API Core: `sigs.k8s.io/cluster-api/api/core/v1beta2` (alias as `clusterv1`)
 
 ### VM Provisioning Workflow (Freebox Specific)
 

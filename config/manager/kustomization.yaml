@@ -1,2 +1,13 @@
 resources:
 - manager.yaml
+- credentials.yaml
+
+patches:
+- path: manager_config.yaml
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+images:
+- name: controller
+  newName: example.com/cluster-api-provider-freebox
+  newTag: v0.0.1

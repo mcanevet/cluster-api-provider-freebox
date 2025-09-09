@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-manager
+  namespace: system
+spec:
+  template:
+    spec:
+      containers:
+      - name: manager
+        env:
+        - name: FREEBOX_ENDPOINT
+          value: "http://freebox-mock.local"
+        - name: FREEBOX_APP_ID
+          value: "cluster-api-provider-freebox"
+        - name: FREEBOX_TOKEN
+          value: "mock-token-for-testing"
+        - name: FREEBOX_VERSION
+          value: "v4"

@@ -19,12 +19,20 @@ package utils
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	infrav1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
 )
 
 const (
@@ -223,4 +231,70 @@ func UncommentCode(filename, target, prefix string) error {
 	}
 
 	return nil
+}
+
+// StringToReader converts a string to an io.Reader for use with kubectl commands
+func StringToReader(s string) io.Reader {
+	return strings.NewReader(s)
+}
+
+// CreateFreeboxMachine creates a FreeboxMachine resource for testing
+func CreateFreeboxMachine(ctx context.Context, k8sClient client.Client, namespace, name, clusterName string, imageURL string) (*infrav1.FreeboxMachine, error) {
+	// Create the cluster first if it doesn't exist
+	cluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      clusterName,
+			Namespace: namespace,
+		},
+		Spec: clusterv1.ClusterSpec{
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: "infrastructure.cluster.x-k8s.io",
+				Kind:     "FreeboxCluster",
+				Name:     clusterName,
+			},
+		},
+	}
+
+	err := k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: clusterName}, cluster)
+	if err != nil {
+		if err := k8sClient.Create(ctx, cluster); err != nil {
+			return nil, fmt.Errorf("failed to create cluster: %w", err)
+		}
+	}
+
+	// Create the FreeboxMachine
+	machine := &infrav1.FreeboxMachine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				clusterv1.ClusterNameLabel: clusterName,
+			},
+		},
+		Spec: infrav1.FreeboxMachineSpec{
+			ImageURL: imageURL,
+			CPUs:     2,
+			Memory:   2048,
+			DiskSize: 20,
+		},
+	}
+
+	// Set cluster as owner
+	if err := client.IgnoreNotFound(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: clusterName}, cluster)); err == nil {
+		machine.SetOwnerReferences([]metav1.OwnerReference{
+			{
+				APIVersion: cluster.APIVersion,
+				Kind:       cluster.Kind,
+				Name:       cluster.Name,
+				UID:        cluster.UID,
+				Controller: ptr.To(true),
+			},
+		})
+	}
+
+	if err := k8sClient.Create(ctx, machine); err != nil {
+		return nil, fmt.Errorf("failed to create FreeboxMachine: %w", err)
+	}
+
+	return machine, nil
 }
