@@ -6,6 +6,11 @@ resources:
 - bases/infrastructure.cluster.x-k8s.io_freeboxmachines.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
+labels:
+- pairs:
+    cluster.x-k8s.io/v1beta2: v1alpha1
+  includeSelectors: true
+
 patches:
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix.
 # patches here are for enabling the conversion webhook for each CRD

@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -43,6 +44,11 @@ type FreeboxClusterStatus struct {
 	// For Kubernetes API conventions, see:
 	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
 
+	// initialization provides observations of the FreeboxCluster initialization process.
+	// NOTE: This field is part of the Cluster API contract and is used to orchestrate initial Cluster provisioning.
+	// +optional
+	Initialization FreeboxClusterInitializationStatus `json:"initialization,omitempty,omitzero"`
+
 	// conditions represent the current state of the FreeboxCluster resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
@@ -56,6 +62,15 @@ type FreeboxClusterStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// FreeboxClusterInitializationStatus provides observations of the FreeboxCluster initialization process.
+// +kubebuilder:validation:MinProperties=1
+type FreeboxClusterInitializationStatus struct {
+	// provisioned is true when the infrastructure provider reports that the Cluster's infrastructure is fully provisioned.
+	// NOTE: this field is part of the Cluster API contract, and it is used to orchestrate initial Cluster provisioning.
+	// +optional
+	Provisioned *bool `json:"provisioned,omitempty"`
 }
 
 // +kubebuilder:object:root=true
