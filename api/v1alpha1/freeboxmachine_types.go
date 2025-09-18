@@ -25,6 +25,14 @@ import (
 
 // FreeboxMachineSpec defines the desired state of FreeboxMachine
 type FreeboxMachineSpec struct {
+	// providerID must match the provider ID as seen on the node object corresponding to this machine.
+	// For Kubernetes Nodes running on the Freebox provider, this value is set by the corresponding CPI component
+	// and it has the format freebox:////<vm-name>.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=512
+	ProviderID string `json:"providerID,omitempty"`
+
 	// Name of the VM in the Freebox
 	Name string `json:"name"`
 	// Number of vCPUs
@@ -41,6 +49,11 @@ type FreeboxMachineSpec struct {
 
 // FreeboxMachineStatus defines the observed state of FreeboxMachine.
 type FreeboxMachineStatus struct {
+	// initialization provides observations of the FreeboxMachine initialization process.
+	// NOTE: Fields in this struct are part of the Cluster API contract and are used to orchestrate initial Machine provisioning.
+	// +optional
+	Initialization FreeboxMachineInitializationStatus `json:"initialization,omitempty,omitzero"`
+
 	// conditions represent the current state of the FreeboxMachine resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
@@ -62,6 +75,15 @@ type FreeboxMachineStatus struct {
 	// DiskPath stores the path to the VM disk file
 	// so it can be deleted when the FreeboxMachine is deleted.
 	DiskPath string `json:"diskPath,omitempty"`
+}
+
+// FreeboxMachineInitializationStatus provides observations of the FreeboxMachine initialization process.
+// +kubebuilder:validation:MinProperties=1
+type FreeboxMachineInitializationStatus struct {
+	// provisioned is true when the infrastructure provider reports that the Machine's infrastructure is fully provisioned.
+	// NOTE: this field is part of the Cluster API contract, and it is used to orchestrate initial Machine provisioning.
+	// +optional
+	Provisioned *bool `json:"provisioned,omitempty"`
 }
 
 // +kubebuilder:object:root=true

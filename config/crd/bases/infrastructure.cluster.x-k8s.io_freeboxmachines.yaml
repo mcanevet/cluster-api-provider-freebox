@@ -54,6 +54,14 @@ spec:
               name:
                 description: Name of the VM in the Freebox
                 type: string
+              providerID:
+                description: |-
+                  providerID must match the provider ID as seen on the node object corresponding to this machine.
+                  For Kubernetes Nodes running on the Freebox provider, this value is set by the corresponding CPI component
+                  and it has the format freebox:////<vm-name>.
+                maxLength: 512
+                minLength: 1
+                type: string
               vcpus:
                 description: Number of vCPUs
                 format: int64
@@ -143,6 +151,18 @@ spec:
                   DiskPath stores the path to the VM disk file
                   so it can be deleted when the FreeboxMachine is deleted.
                 type: string
+              initialization:
+                description: |-
+                  initialization provides observations of the FreeboxMachine initialization process.
+                  NOTE: Fields in this struct are part of the Cluster API contract and are used to orchestrate initial Machine provisioning.
+                minProperties: 1
+                properties:
+                  provisioned:
+                    description: |-
+                      provisioned is true when the infrastructure provider reports that the Machine's infrastructure is fully provisioned.
+                      NOTE: this field is part of the Cluster API contract, and it is used to orchestrate initial Machine provisioning.
+                    type: boolean
+                type: object
               vmID:
                 description: |-
                   VMID stores the ID of the created Freebox virtual machine
