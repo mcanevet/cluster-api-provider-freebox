@@ -74,6 +74,10 @@ type FreeboxClusterInitializationStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:path=freeboxclusters,scope=Namespaced,categories=cluster-api
+// +kubebuilder:printcolumn:name="Cluster",type="string",JSONPath=".metadata.labels.cluster\\.x-k8s\\.io/cluster-name",description="Cluster to which this FreeboxCluster belongs"
+// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.initialization.provisioned",description="FreeboxCluster ready status"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time duration since creation of FreeboxCluster"
 
 // FreeboxCluster is the Schema for the freeboxclusters API
 type FreeboxCluster struct {

@@ -1,0 +1,88 @@
+managementClusterName: freebox-test
+
+images:
+- name: example.com/cluster-api-provider-freebox:v0.0.1
+  loadBehavior: tryLoad
+
+providers:
+- name: cluster-api
+  type: CoreProvider
+  versions:
+  - name: v1.11.1
+    value: https://github.com/kubernetes-sigs/cluster-api/releases/download/v1.11.1/core-components.yaml
+    type: "url"
+    contract: v1beta1
+    replacements:
+    - old: "imagePullPolicy: Always"
+      new: "imagePullPolicy: IfNotPresent"
+    files:
+    - sourcePath: "../data/shared/metadata.yaml"
+
+- name: kubeadm
+  type: BootstrapProvider
+  versions:
+  - name: v1.11.1
+    value: https://github.com/kubernetes-sigs/cluster-api/releases/download/v1.11.1/bootstrap-components.yaml
+    type: "url"
+    contract: v1beta1
+    replacements:
+    - old: "imagePullPolicy: Always"
+      new: "imagePullPolicy: IfNotPresent"
+    files:
+    - sourcePath: "../data/shared/metadata.yaml"
+
+- name: kubeadm
+  type: ControlPlaneProvider
+  versions:
+  - name: v1.11.1
+    value: https://github.com/kubernetes-sigs/cluster-api/releases/download/v1.11.1/control-plane-components.yaml
+    type: "url"
+    contract: v1beta1
+    replacements:
+    - old: "imagePullPolicy: Always"
+      new: "imagePullPolicy: IfNotPresent"
+    files:
+    - sourcePath: "../data/shared/metadata.yaml"
+
+- name: freebox
+  type: InfrastructureProvider
+  versions:
+  - name: v0.0.1
+    value: ../../../config/default
+    contract: v1beta1
+    replacements:
+    - old: "imagePullPolicy: Always"
+      new: "imagePullPolicy: IfNotPresent"
+    - old: controller:latest
+      new: example.com/cluster-api-provider-freebox:v0.0.1
+    files:
+    - sourcePath: "../data/infrastructure-freebox/metadata.yaml"
+
+variables:
+  KUBERNETES_VERSION: "v1.34.0"
+  KUBERNETES_VERSION_MANAGEMENT: "v1.34.0"
+  CNI: "./data/cni/kindnet/kindnet.yaml"
+  EXP_CLUSTER_RESOURCE_SET: "true"
+  CLUSTER_TOPOLOGY: "true"
+  IP_FAMILY: "IPv4"
+  FREEBOX_ENDPOINT: "${FREEBOX_ENDPOINT:-http://freebox-mock.local}"
+  FREEBOX_APP_ID: "${FREEBOX_APP_ID:-cluster-api-provider-freebox}"
+  FREEBOX_TOKEN: "${FREEBOX_TOKEN:-mock-token}"
+  FREEBOX_VERSION: "${FREEBOX_VERSION:-v4}"
+  TEST_IMAGE_URL: "${TEST_IMAGE_URL:-https://cloud-images.ubuntu.com/minimal/releases/jammy/release/ubuntu-22.04-minimal-cloudimg-amd64.img}"
+
+intervals:
+  default/wait-controllers: ["3m", "10s"]
+  default/wait-cluster: ["5m", "10s"]
+  default/wait-control-plane: ["10m", "10s"]
+  default/wait-worker-nodes: ["5m", "10s"]
+  default/wait-delete-cluster: ["3m", "10s"]
+  default/wait-machine-upgrade: ["20m", "10s"]
+  default/wait-machine-remediation: ["5m", "10s"]
+  default/wait-deployment: ["5m", "10s"]
+  default/wait-job: ["5m", "10s"]
+  default/wait-service: ["3m", "10s"]
+  default/wait-crd: ["1m", "5s"]
+  default/wait-machine: ["3m", "10s"]
+  default/wait-delete: ["3m", "10s"]
+

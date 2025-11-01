@@ -8,13 +8,36 @@ metadata:
 spec:
   group: infrastructure.cluster.x-k8s.io
   names:
+    categories:
+    - cluster-api
     kind: FreeboxMachine
     listKind: FreeboxMachineList
     plural: freeboxmachines
     singular: freeboxmachine
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - description: Cluster to which this FreeboxMachine belongs
+      jsonPath: .metadata.labels.cluster\.x-k8s\.io/cluster-name
+      name: Cluster
+      type: string
+    - description: Machine object which owns with this FreeboxMachine
+      jsonPath: .metadata.ownerReferences[?(@.kind=="Machine")].name
+      name: Machine
+      type: string
+    - description: Provider ID
+      jsonPath: .spec.providerID
+      name: ProviderID
+      type: string
+    - description: FreeboxMachine ready status
+      jsonPath: .status.initialization.provisioned
+      name: Ready
+      type: string
+    - description: Time duration since creation of FreeboxMachine
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: FreeboxMachine is the Schema for the freeboxmachines API

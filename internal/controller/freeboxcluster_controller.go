@@ -19,7 +19,10 @@ package controller
 import (
 	"context"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -43,17 +46,37 @@ type FreeboxClusterReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the FreeboxCluster object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
 func (r *FreeboxClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	logger := logf.FromContext(ctx)
 
-	// TODO(user): your logic here
+	// Fetch the FreeboxCluster resource
+	var cluster infrastructurev1alpha1.FreeboxCluster
+	if err := r.Get(ctx, req.NamespacedName, &cluster); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Following YAGNI principle: Since we don't manage external cluster infrastructure,
+	// the cluster is always provisioned. We just need to report that to CAPI.
+
+	// Set initialization.provisioned to true
+	if cluster.Status.Initialization.Provisioned == nil || !*cluster.Status.Initialization.Provisioned {
+		cluster.Status.Initialization.Provisioned = ptr.To(true)
+
+		// Set Ready condition to True
+		meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
+			Type:    "Ready",
+			Status:  metav1.ConditionTrue,
+			Reason:  "InfrastructureReady",
+			Message: "Freebox cluster infrastructure is ready",
+		})
+
+		if err := r.Status().Update(ctx, &cluster); err != nil {
+			logger.Error(err, "Failed to update FreeboxCluster status")
+			return ctrl.Result{}, err
+		}
+
+		logger.Info("FreeboxCluster marked as provisioned")
+	}
 
 	return ctrl.Result{}, nil
 }

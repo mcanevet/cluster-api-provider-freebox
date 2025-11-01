@@ -25,6 +25,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -358,11 +359,21 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			// Store VM ID and disk path in status for deletion later
 			machine.Status.VMID = vm.ID
 			machine.Status.DiskPath = diskPath
+
+			// Set initialization.provisioned to true - this signals to CAPI that the machine is ready
+			machine.Status.Initialization.Provisioned = ptr.To(true)
+
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    ConditionImageReady,
 				Status:  metav1.ConditionTrue,
 				Reason:  "Completed",
 				Message: "Image downloaded, extracted, resized, and VM created",
+			})
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    ConditionReady,
+				Status:  metav1.ConditionTrue,
+				Reason:  "InfrastructureReady",
+				Message: "Freebox machine infrastructure is ready",
 			})
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImagePhase",
