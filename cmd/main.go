@@ -17,9 +17,20 @@ limitations under the License.
 package main
 
 import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha1"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -211,6 +222,40 @@ func main() {
 
 	setupLog.Info("Freebox client created successfully")
 
+	// Login to establish a session (this validates credentials work)
+	ctx := context.Background()
+	permissions, err := fbClient.Login(ctx)
+	if err != nil {
+		setupLog.Error(err, "unable to login to Freebox")
+		os.Exit(1)
+	}
+	setupLog.Info("Logged in to Freebox successfully", "permissions", permissions)
+
+	// Get a session token for our direct API calls
+	// Since free-go doesn't expose /downloads/config/ and /system/ endpoints,
+	// we need to make direct HTTP calls with our own session
+	sessionToken, err := getFreeboxSessionToken(freeboxEndpoint, freeboxVersion, freeboxAppID, freeboxToken)
+	if err != nil {
+		setupLog.Error(err, "unable to get session token for API calls")
+		os.Exit(1)
+	}
+
+	// Fetch Freebox download directory from Freebox download config
+	freeboxDownloadDir, err := getFreeboxDownloadDir(freeboxEndpoint, freeboxVersion, sessionToken)
+	if err != nil {
+		setupLog.Error(err, "unable to fetch download_dir from Freebox /downloads/config/")
+		os.Exit(1)
+	}
+	setupLog.Info("Using Freebox download directory from /downloads/config", "path", freeboxDownloadDir)
+
+	// Fetch VM storage path from Freebox system config
+	vmStoragePath, err := getVMStoragePath(freeboxEndpoint, freeboxVersion, sessionToken)
+	if err != nil {
+		setupLog.Error(err, "unable to fetch user_main_storage from Freebox /system/")
+		os.Exit(1)
+	}
+	setupLog.Info("Using VM storage path from /system/ user_main_storage", "path", vmStoragePath)
+
 	// // TODO: remove this
 	// ctx := context.Background()
 
@@ -238,9 +283,11 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.FreeboxMachineReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		FreeboxClient: fbClient,
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		FreeboxClient:      fbClient,
+		FreeboxDownloadDir: freeboxDownloadDir,
+		VMStoragePath:      vmStoragePath,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FreeboxMachine")
 		os.Exit(1)
@@ -261,4 +308,219 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// getFreeboxDownloadDir queries the Freebox API to get the default download directory.
+// This is a direct HTTP call since the free-go library doesn't expose the
+// /downloads/config/ endpoint yet. Consider contributing this to free-go in the future.
+func getFreeboxDownloadDir(endpoint, version, sessionToken string) (string, error) {
+	// Construct the URL for the downloads config endpoint
+	configURL := fmt.Sprintf("%s/api/%s/downloads/config/", endpoint, version)
+
+	// Create HTTP request
+	req, err := http.NewRequest("GET", configURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add authentication header with session token
+	req.Header.Set("X-Fbx-App-Auth", sessionToken)
+
+	// Make the request
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Parse JSON response
+	var result struct {
+		Success   bool   `json:"success"`
+		ErrorCode string `json:"error_code,omitempty"`
+		Msg       string `json:"msg,omitempty"`
+		Result    struct {
+			DownloadDir string `json:"download_dir"` // Base64 encoded path
+		} `json:"result"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("failed to parse JSON response: %w", err)
+	}
+
+	if !result.Success {
+		if result.ErrorCode != "" || result.Msg != "" {
+			return "", fmt.Errorf("API call failed: error_code=%s, msg=%s", result.ErrorCode, result.Msg)
+		}
+		return "", fmt.Errorf("API call was not successful (no error details provided)")
+	}
+
+	// Decode base64 download_dir
+	decodedBytes, err := base64.StdEncoding.DecodeString(result.Result.DownloadDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode base64 download_dir: %w", err)
+	}
+
+	downloadDir := string(decodedBytes)
+	if downloadDir == "" {
+		return "", fmt.Errorf("download_dir is empty after decoding")
+	}
+
+	return downloadDir, nil
+}
+
+// getVMStoragePath queries the Freebox API to get the VM storage path.
+// This is a direct HTTP call since the free-go library doesn't expose the
+// /system/ endpoint yet. Consider contributing this to free-go in the future.
+func getVMStoragePath(endpoint, version, sessionToken string) (string, error) {
+	// Construct the URL for the system endpoint
+	systemURL := fmt.Sprintf("%s/api/%s/system/", endpoint, version)
+
+	// Create HTTP request
+	req, err := http.NewRequest("GET", systemURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add authentication header with session token
+	req.Header.Set("X-Fbx-App-Auth", sessionToken)
+
+	// Make the request
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Parse JSON response
+	var result struct {
+		Success   bool   `json:"success"`
+		ErrorCode string `json:"error_code,omitempty"`
+		Msg       string `json:"msg,omitempty"`
+		Result    struct {
+			UserMainStorage string `json:"user_main_storage"` // Plain string like "Disque 1", NOT base64 encoded
+		} `json:"result"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("failed to parse JSON response: %w", err)
+	}
+
+	if !result.Success {
+		if result.ErrorCode != "" || result.Msg != "" {
+			return "", fmt.Errorf("API call failed: error_code=%s, msg=%s", result.ErrorCode, result.Msg)
+		}
+		return "", fmt.Errorf("API call was not successful (no error details provided)")
+	}
+
+	// Check if user_main_storage is empty
+	if result.Result.UserMainStorage == "" {
+		return "", fmt.Errorf("user_main_storage is empty in response")
+	}
+
+	// Note: user_main_storage is NOT base64 encoded, it's a plain string like "Disque 1"
+	// So we use it directly without decoding
+	mainStorage := result.Result.UserMainStorage
+	if mainStorage == "" {
+		return "", fmt.Errorf("user_main_storage is empty")
+	}
+
+	// The main storage is just a disk name like "Disque 1", we need to construct the full path
+	// According to Freebox conventions, the path is /DiskName/
+	vmStoragePath := "/" + mainStorage + "/VMs"
+
+	return vmStoragePath, nil
+}
+
+// getFreeboxSessionToken creates a session token for direct API calls.
+// This is needed because free-go doesn't expose some endpoints we need.
+func getFreeboxSessionToken(endpoint, version, appID, privateToken string) (string, error) {
+	// Step 1: Get the login challenge
+	challengeURL := fmt.Sprintf("%s/api/%s/login", endpoint, version)
+	resp, err := http.Get(challengeURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to get login challenge: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read challenge response: %w", err)
+	}
+
+	var challengeResult struct {
+		Success   bool   `json:"success"`
+		ErrorCode string `json:"error_code,omitempty"`
+		Msg       string `json:"msg,omitempty"`
+		Result    struct {
+			Challenge string `json:"challenge"`
+		} `json:"result"`
+	}
+
+	if err := json.Unmarshal(body, &challengeResult); err != nil {
+		return "", fmt.Errorf("failed to parse challenge response: %w", err)
+	}
+
+	if !challengeResult.Success {
+		if challengeResult.ErrorCode != "" || challengeResult.Msg != "" {
+			return "", fmt.Errorf("challenge request failed: error_code=%s, msg=%s", challengeResult.ErrorCode, challengeResult.Msg)
+		}
+		return "", fmt.Errorf("challenge request was not successful")
+	}
+
+	// Step 2: Compute the password (HMAC-SHA1 of challenge with private token)
+	//nolint:gosec // SHA1 is required by Freebox API
+	h := hmac.New(sha1.New, []byte(privateToken))
+	h.Write([]byte(challengeResult.Result.Challenge))
+	password := hex.EncodeToString(h.Sum(nil))
+
+	// Step 3: Open a session
+	sessionURL := fmt.Sprintf("%s/api/%s/login/session", endpoint, version)
+	sessionPayload := fmt.Sprintf(`{"app_id":"%s","password":"%s"}`, appID, password)
+
+	sessionResp, err := http.Post(sessionURL, "application/json", strings.NewReader(sessionPayload))
+	if err != nil {
+		return "", fmt.Errorf("failed to open session: %w", err)
+	}
+	defer sessionResp.Body.Close()
+
+	sessionBody, err := io.ReadAll(sessionResp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read session response: %w", err)
+	}
+
+	var sessionResult struct {
+		Success   bool   `json:"success"`
+		ErrorCode string `json:"error_code,omitempty"`
+		Msg       string `json:"msg,omitempty"`
+		Result    struct {
+			SessionToken string `json:"session_token"`
+		} `json:"result"`
+	}
+
+	if err := json.Unmarshal(sessionBody, &sessionResult); err != nil {
+		return "", fmt.Errorf("failed to parse session response: %w", err)
+	}
+
+	if !sessionResult.Success {
+		if sessionResult.ErrorCode != "" || sessionResult.Msg != "" {
+			return "", fmt.Errorf("session request failed: error_code=%s, msg=%s", sessionResult.ErrorCode, sessionResult.Msg)
+		}
+		return "", fmt.Errorf("session request was not successful")
+	}
+
+	return sessionResult.Result.SessionToken, nil
 }

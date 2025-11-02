@@ -48,8 +48,10 @@ const (
 // FreeboxMachineReconciler reconciles a FreeboxMachine object
 type FreeboxMachineReconciler struct {
 	client.Client
-	Scheme        *runtime.Scheme
-	FreeboxClient freeboxclient.Client
+	Scheme             *runtime.Scheme
+	FreeboxClient      freeboxclient.Client
+	FreeboxDownloadDir string // Freebox download directory path from /api/v*/downloads/config/
+	VMStoragePath      string // VM storage path from user_main_storage + "/VMs"
 }
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=freeboxmachines,verbs=get;list;watch;create;update;patch;delete
@@ -132,29 +134,37 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
-	destDir := "/SSD/VMs"
+	// Images are downloaded to FreeboxDownloadDir, then extracted/copied to VMStoragePath
 	imageName := path.Base(imageURL)
-	imagePath := path.Join(destDir, imageName)
+	downloadPath := path.Join(r.FreeboxDownloadDir, imageName)
+
+	// Determine the final image path in VM storage
+	var finalImagePath string
+	if isCompressedFile(imageName) {
+		// For compressed files, the extracted file won't have the compression extension
+		finalImagePath = path.Join(r.VMStoragePath, removeCompressionExtension(imageName))
+	} else {
+		finalImagePath = path.Join(r.VMStoragePath, imageName)
+	}
 
 	// Retrieve current phase
 	phaseCond := meta.FindStatusCondition(machine.Status.Conditions, "ImagePhase")
 	var phase string
 	var taskID int64
-	var srcPath, dstPath string
 
 	if phaseCond != nil {
-		fmt.Sscanf(phaseCond.Message, "phase=%s task_id=%d src=%s dst=%s", &phase, &taskID, &srcPath, &dstPath)
+		fmt.Sscanf(phaseCond.Message, "phase=%s task_id=%d", &phase, &taskID)
 	}
 
 	// -----------------------
 	// 1. Start download
 	// -----------------------
 	if phase == "" {
-		logger.Info("Starting image download", "url", imageURL)
+		logger.Info("Starting image download", "url", imageURL, "dest", r.FreeboxDownloadDir)
 
 		reqDownload := freeboxTypes.DownloadRequest{
 			DownloadURLs:      []string{imageURL},
-			DownloadDirectory: destDir,
+			DownloadDirectory: r.FreeboxDownloadDir,
 			Filename:          imageName,
 		}
 
@@ -190,18 +200,20 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			logger.Info("Download completed", "taskID", taskID)
 
 			if isCompressedFile(imageName) {
+				// Extract from download dir to VM storage
 				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 					Type:    "ImagePhase",
 					Status:  metav1.ConditionFalse,
 					Reason:  "Extracting",
-					Message: fmt.Sprintf("phase=extract task_id=0 src=%s dst=%s", imagePath, destDir),
+					Message: fmt.Sprintf("phase=extract task_id=0 src=%s dst=%s", downloadPath, r.VMStoragePath),
 				})
 			} else {
+				// Copy from download dir to VM storage
 				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 					Type:    "ImagePhase",
 					Status:  metav1.ConditionFalse,
-					Reason:  "Resizing",
-					Message: fmt.Sprintf("phase=resize task_id=0 disk=%s", imagePath),
+					Reason:  "Copying",
+					Message: fmt.Sprintf("phase=copy task_id=0 src=%s dst=%s", downloadPath, finalImagePath),
 				})
 			}
 			_ = r.Status().Update(ctx, &machine)
@@ -227,12 +239,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// 3. Extraction phase
 	// -----------------------
 	if phase == "extract" {
-		fmt.Sscanf(phaseCond.Message, "phase=extract task_id=%d src=%s dst=%s", &taskID, &srcPath, &dstPath)
+		fmt.Sscanf(phaseCond.Message, "phase=extract task_id=%d", &taskID)
 
 		if taskID == 0 {
 			fsPayload := freeboxTypes.ExtractFilePayload{
-				Src: freeboxTypes.Base64Path(srcPath),
-				Dst: freeboxTypes.Base64Path(dstPath),
+				Src: freeboxTypes.Base64Path(downloadPath),
+				Dst: freeboxTypes.Base64Path(r.VMStoragePath),
 			}
 
 			fsTask, err := r.FreeboxClient.ExtractFile(ctx, fsPayload)
@@ -246,7 +258,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Type:    "ImagePhase",
 				Status:  metav1.ConditionFalse,
 				Reason:  "Extracting",
-				Message: fmt.Sprintf("phase=extract task_id=%d src=%s dst=%s", fsTask.ID, srcPath, dstPath),
+				Message: fmt.Sprintf("phase=extract task_id=%d", fsTask.ID),
 			})
 			_ = r.Status().Update(ctx, &machine)
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
@@ -264,7 +276,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Type:    "ImagePhase",
 				Status:  metav1.ConditionFalse,
 				Reason:  "Resizing",
-				Message: fmt.Sprintf("phase=resize task_id=0 disk=%s", stripCompressionSuffix(imagePath)),
+				Message: "phase=resize task_id=0",
 			})
 			_ = r.Status().Update(ctx, &machine)
 			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
@@ -284,15 +296,70 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// -----------------------
-	// 4. Resize disk
+	// 4. Copy phase (for non-compressed images)
+	// -----------------------
+	if phase == "copy" {
+		fmt.Sscanf(phaseCond.Message, "phase=copy task_id=%d", &taskID)
+
+		if taskID == 0 {
+			// Copy file from download dir to VM storage
+			fsTask, err := r.FreeboxClient.CopyFiles(ctx, []string{downloadPath}, path.Dir(finalImagePath), freeboxTypes.FileCopyModeOverwrite)
+			if err != nil {
+				logger.Error(err, "Failed to start copy")
+				return ctrl.Result{}, err
+			}
+
+			logger.Info("Copy started", "taskID", fsTask.ID)
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    "ImagePhase",
+				Status:  metav1.ConditionFalse,
+				Reason:  "Copying",
+				Message: fmt.Sprintf("phase=copy task_id=%d", fsTask.ID),
+			})
+			_ = r.Status().Update(ctx, &machine)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		fsTask, err := r.FreeboxClient.GetFileSystemTask(ctx, taskID)
+		if err != nil {
+			logger.Error(err, "Failed to get copy task status")
+			return ctrl.Result{}, err
+		}
+
+		if fsTask.State == "done" {
+			logger.Info("Copy completed", "taskID", taskID)
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    "ImagePhase",
+				Status:  metav1.ConditionFalse,
+				Reason:  "Resizing",
+				Message: "phase=resize task_id=0",
+			})
+			_ = r.Status().Update(ctx, &machine)
+			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+		} else if fsTask.State == "error" {
+			logger.Error(fmt.Errorf("copy failed"), "Copy failed")
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    "ImagePhase",
+				Status:  metav1.ConditionFalse,
+				Reason:  "CopyFailed",
+				Message: "Image copy failed",
+			})
+			_ = r.Status().Update(ctx, &machine)
+			return ctrl.Result{}, fmt.Errorf("copy failed")
+		}
+
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	// -----------------------
+	// 5. Resize disk
 	// -----------------------
 	if phase == "resize" {
-		var diskPath string
-		fmt.Sscanf(phaseCond.Message, "phase=resize task_id=%d disk=%s", &taskID, &diskPath)
+		fmt.Sscanf(phaseCond.Message, "phase=resize task_id=%d", &taskID)
 
 		if taskID == 0 {
 			resizePayload := freeboxTypes.VirtualDisksResizePayload{
-				DiskPath:    freeboxTypes.Base64Path(diskPath),
+				DiskPath:    freeboxTypes.Base64Path(finalImagePath),
 				NewSize:     machine.Spec.DiskSizeBytes,
 				ShrinkAllow: false,
 			}
@@ -308,7 +375,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Type:    "ImagePhase",
 				Status:  metav1.ConditionFalse,
 				Reason:  "Resizing",
-				Message: fmt.Sprintf("phase=resize task_id=%d disk=%s", newTaskID, diskPath),
+				Message: fmt.Sprintf("phase=resize task_id=%d", newTaskID),
 			})
 			_ = r.Status().Update(ctx, &machine)
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
@@ -335,13 +402,21 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 			logger.Info("Disk resize completed", "taskID", taskID)
 
+			// Image is now ready (downloaded, extracted/copied, and resized)
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    "ImageReady",
+				Status:  metav1.ConditionTrue,
+				Reason:  "ImageReady",
+				Message: "Image downloaded, extracted, and resized",
+			})
+			_ = r.Status().Update(ctx, &machine)
+
 			// -----------------------
 			// 5. Create VM
 			// -----------------------
-			diskPath := stripCompressionSuffix(imagePath)
 			vmPayload := freeboxTypes.VirtualMachinePayload{
 				Name:     machine.Name,
-				DiskPath: freeboxTypes.Base64Path(diskPath),
+				DiskPath: freeboxTypes.Base64Path(finalImagePath),
 				DiskType: freeboxTypes.RawDisk,
 				Memory:   machine.Spec.MemoryMB, // in MB
 				VCPUs:    machine.Spec.VCPUs,
@@ -358,16 +433,16 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 			// Store VM ID and disk path in status for deletion later
 			machine.Status.VMID = vm.ID
-			machine.Status.DiskPath = diskPath
+			machine.Status.DiskPath = finalImagePath
 
 			// Set initialization.provisioned to true - this signals to CAPI that the machine is ready
 			machine.Status.Initialization.Provisioned = ptr.To(true)
 
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    ConditionImageReady,
+				Type:    ConditionReady,
 				Status:  metav1.ConditionTrue,
-				Reason:  "Completed",
-				Message: "Image downloaded, extracted, resized, and VM created",
+				Reason:  "VMCreated",
+				Message: "VM created successfully",
 			})
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    ConditionReady,
@@ -418,6 +493,11 @@ func stripCompressionSuffix(name string) string {
 		return strings.TrimSuffix(name, ext)
 	}
 	return name
+}
+
+// removeCompressionExtension is an alias for stripCompressionSuffix
+func removeCompressionExtension(name string) string {
+	return stripCompressionSuffix(name)
 }
 
 func containsString(slice []string, s string) bool {

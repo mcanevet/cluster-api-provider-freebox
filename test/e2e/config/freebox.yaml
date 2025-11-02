@@ -65,11 +65,11 @@ variables:
   EXP_CLUSTER_RESOURCE_SET: "true"
   CLUSTER_TOPOLOGY: "true"
   IP_FAMILY: "IPv4"
-  FREEBOX_ENDPOINT: "${FREEBOX_ENDPOINT:-http://freebox-mock.local}"
-  FREEBOX_APP_ID: "${FREEBOX_APP_ID:-cluster-api-provider-freebox}"
-  FREEBOX_TOKEN: "${FREEBOX_TOKEN:-mock-token}"
-  FREEBOX_VERSION: "${FREEBOX_VERSION:-v4}"
-  TEST_IMAGE_URL: "${TEST_IMAGE_URL:-https://cloud-images.ubuntu.com/minimal/releases/jammy/release/ubuntu-22.04-minimal-cloudimg-amd64.img}"
+  FREEBOX_ENDPOINT: "http://freebox-mock.local"
+  FREEBOX_APP_ID: "cluster-api-provider-freebox"
+  FREEBOX_TOKEN: "mock-token"
+  FREEBOX_VERSION: "latest"
+  TEST_IMAGE_URL: "https://cloud-images.ubuntu.com/minimal/releases/jammy/release/ubuntu-22.04-minimal-cloudimg-amd64.img"
 
 intervals:
   default/wait-controllers: ["3m", "10s"]

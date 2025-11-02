@@ -21,6 +21,7 @@ package e2e
 
 import (
 	"fmt"
+	"path"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -82,6 +83,10 @@ var _ = Describe("Freebox Provider Basic Tests", func() {
 				imageURL = testImageURL
 			}
 
+			// vmStoragePath is set from the Freebox /system/ API in the suite setup
+			vmStoragePath, ok := e2eConfig.Variables["VM_STORAGE_PATH"]
+			Expect(ok).To(BeTrue(), "VM_STORAGE_PATH should be set by suite from /system/ user_main_storage")
+
 			machine := &infrastructurev1alpha1.FreeboxMachine{
 				ObjectMeta: metav1.ObjectMeta{
 					GenerateName: "test-machine-",
@@ -100,11 +105,32 @@ var _ = Describe("Freebox Provider Basic Tests", func() {
 			machineKey := GetObjectKey(machine)
 
 			By("Waiting for the FreeboxMachine to be created")
-			GetFreeboxMachine(ctx, GetFreeboxMachineInput{
+			createdMachine := GetFreeboxMachine(ctx, GetFreeboxMachineInput{
 				Getter:    clusterProxy.GetClient(),
 				Name:      machineKey.Name,
 				Namespace: machineKey.Namespace,
 			}, e2eConfig.GetIntervals("default", "wait-machine")...)
+
+			By("Verifying the image has been properly downloaded using Freebox API")
+			Eventually(func() error {
+				// Verify the file actually exists on Freebox storage
+				// Use the same logic as the controller: path.Base(imageURL) for the filename
+				imageName := path.Base(imageURL)
+				imagePath := path.Join(vmStoragePath, imageName)
+				fileInfo, err := freeboxClient.GetFileInfo(ctx, imagePath)
+				if err != nil {
+					return fmt.Errorf("failed to get file info for %s: %w", imagePath, err)
+				}
+
+				// Verify it's a file and has reasonable size
+				if fileInfo.SizeBytes == 0 {
+					return fmt.Errorf("image file %s exists but has zero size", imagePath)
+				}
+
+				return nil
+			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+				"Image should be downloaded and present on Freebox storage for FreeboxMachine %s/%s",
+				createdMachine.Namespace, createdMachine.Name)
 
 			By("Deleting the FreeboxMachine")
 			Expect(clusterProxy.GetClient().Delete(ctx, machine)).To(Succeed())
