@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -138,14 +139,18 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	imageName := path.Base(imageURL)
 	downloadPath := path.Join(r.FreeboxDownloadDir, imageName)
 
-	// Determine the final image path in VM storage
-	var finalImagePath string
+	// Determine the final image path in VM storage using VM name
+	// The final image will be named after the VM (machine.Spec.Name) with the underlying disk extension
+	underlyingName := imageName
 	if isCompressedFile(imageName) {
-		// For compressed files, the extracted file won't have the compression extension
-		finalImagePath = path.Join(r.VMStoragePath, removeCompressionExtension(imageName))
-	} else {
-		finalImagePath = path.Join(r.VMStoragePath, imageName)
+		underlyingName = removeCompressionExtension(imageName)
 	}
+	ext := path.Ext(underlyingName)
+	if ext == "" {
+		ext = ".raw" // Default extension if none found
+	}
+	vmImageName := machine.Spec.Name + ext
+	finalImagePath := path.Join(r.VMStoragePath, vmImageName)
 
 	// Retrieve current phase
 	phaseCond := meta.FindStatusCondition(machine.Status.Conditions, "ImagePhase")
@@ -272,6 +277,22 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 		if fsTask.State == "done" {
 			logger.Info("Extraction completed", "taskID", taskID)
+
+			// After extraction, file has the underlying name (without compression suffix)
+			// Need to rename to VM-named file
+			extractedPath := path.Join(r.VMStoragePath, removeCompressionExtension(imageName))
+			if extractedPath != finalImagePath {
+				logger.Info("Starting rename after extraction", "from", extractedPath, "to", finalImagePath)
+				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+					Type:    "ImagePhase",
+					Status:  metav1.ConditionFalse,
+					Reason:  "Renaming",
+					Message: fmt.Sprintf("phase=rename task_id=0 src=%s dst=%s", extractedPath, finalImagePath),
+				})
+				_ = r.Status().Update(ctx, &machine)
+				return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+			}
+
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImagePhase",
 				Status:  metav1.ConditionFalse,
@@ -302,14 +323,16 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		fmt.Sscanf(phaseCond.Message, "phase=copy task_id=%d", &taskID)
 
 		if taskID == 0 {
-			// Copy file from download dir to VM storage
-			fsTask, err := r.FreeboxClient.CopyFiles(ctx, []string{downloadPath}, path.Dir(finalImagePath), freeboxTypes.FileCopyModeOverwrite)
+			// Copy file from download dir to VM storage directory
+			// Note: CopyFiles can only specify directory destination, not filename
+			// We'll copy to VM storage dir, keeping the original in downloads
+			fsTask, err := r.FreeboxClient.CopyFiles(ctx, []string{downloadPath}, r.VMStoragePath, freeboxTypes.FileCopyModeOverwrite)
 			if err != nil {
-				logger.Error(err, "Failed to start copy")
+				logger.Error(err, "Failed to start copy to VM storage")
 				return ctrl.Result{}, err
 			}
 
-			logger.Info("Copy started", "taskID", fsTask.ID)
+			logger.Info("Copy started", "taskID", fsTask.ID, "from", downloadPath, "to", r.VMStoragePath)
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImagePhase",
 				Status:  metav1.ConditionFalse,
@@ -328,6 +351,23 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 		if fsTask.State == "done" {
 			logger.Info("Copy completed", "taskID", taskID)
+
+			// After copy completes, we need to rename from source filename to VM name
+			// The copied file has the source image name, we need to rename it to VM name
+			copiedPath := path.Join(r.VMStoragePath, imageName)
+			if copiedPath != finalImagePath {
+				// Need to rename the copied file to the VM-named path
+				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+					Type:    "ImagePhase",
+					Status:  metav1.ConditionFalse,
+					Reason:  "Renaming",
+					Message: fmt.Sprintf("phase=rename task_id=0 src=%s dst=%s", copiedPath, finalImagePath),
+				})
+				_ = r.Status().Update(ctx, &machine)
+				return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+			}
+
+			// If names already match (shouldn't happen), proceed to resize
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImagePhase",
 				Status:  metav1.ConditionFalse,
@@ -352,7 +392,72 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// -----------------------
-	// 5. Resize disk
+	// 5. Rename to VM name
+	// -----------------------
+	if phase == "rename" {
+		var srcPath, dstPath string
+		// Parse the message to extract task_id, src, and dst
+		// Use regex to handle paths with spaces
+		re := regexp.MustCompile(`task_id=(\d+) src=(.+) dst=(.+)`)
+		matches := re.FindStringSubmatch(phaseCond.Message)
+		if len(matches) == 4 {
+			fmt.Sscanf(matches[1], "%d", &taskID)
+			srcPath = matches[2]
+			dstPath = matches[3]
+		}
+
+		if taskID == 0 {
+			// Start the rename operation using MoveFiles
+			mvTask, err := r.FreeboxClient.MoveFiles(ctx, []string{srcPath}, dstPath, freeboxTypes.FileMoveModeOverwrite)
+			if err != nil {
+				logger.Error(err, "Failed to start rename", "from", srcPath, "to", dstPath)
+				return ctrl.Result{}, err
+			}
+
+			logger.Info("Rename task started", "taskID", mvTask.ID, "from", srcPath, "to", dstPath)
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    "ImagePhase",
+				Status:  metav1.ConditionFalse,
+				Reason:  "Renaming",
+				Message: fmt.Sprintf("phase=rename task_id=%d src=%s dst=%s", mvTask.ID, srcPath, dstPath),
+			})
+			_ = r.Status().Update(ctx, &machine)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		fsTask, err := r.FreeboxClient.GetFileSystemTask(ctx, taskID)
+		if err != nil {
+			logger.Error(err, "Failed to get rename task status")
+			return ctrl.Result{}, err
+		}
+
+		if fsTask.State == "done" {
+			logger.Info("Rename completed", "taskID", taskID)
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    "ImagePhase",
+				Status:  metav1.ConditionFalse,
+				Reason:  "Resizing",
+				Message: "phase=resize task_id=0",
+			})
+			_ = r.Status().Update(ctx, &machine)
+			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+		} else if fsTask.State == "error" {
+			logger.Error(fmt.Errorf("rename failed"), "Rename failed", "error", fsTask.Error)
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    "ImagePhase",
+				Status:  metav1.ConditionFalse,
+				Reason:  "RenameFailed",
+				Message: fmt.Sprintf("Image rename failed: %s", fsTask.Error),
+			})
+			_ = r.Status().Update(ctx, &machine)
+			return ctrl.Result{}, fmt.Errorf("rename failed: %s", fsTask.Error)
+		}
+
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	// -----------------------
+	// 6. Resize disk
 	// -----------------------
 	if phase == "resize" {
 		fmt.Sscanf(phaseCond.Message, "phase=resize task_id=%d", &taskID)
@@ -402,17 +507,17 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 			logger.Info("Disk resize completed", "taskID", taskID)
 
-			// Image is now ready (downloaded, extracted/copied, and resized)
+			// Image is now ready (downloaded, extracted/copied, renamed, and resized)
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImageReady",
 				Status:  metav1.ConditionTrue,
 				Reason:  "ImageReady",
-				Message: "Image downloaded, extracted, and resized",
+				Message: "Image downloaded, extracted, renamed, and resized",
 			})
 			_ = r.Status().Update(ctx, &machine)
 
 			// -----------------------
-			// 5. Create VM
+			// 7. Create VM
 			// -----------------------
 			vmPayload := freeboxTypes.VirtualMachinePayload{
 				Name:     machine.Name,

@@ -113,23 +113,45 @@ var _ = Describe("Freebox Provider Basic Tests", func() {
 
 			By("Verifying the image has been properly downloaded using Freebox API")
 			Eventually(func() error {
-				// Verify the file actually exists on Freebox storage
-				// Use the same logic as the controller: path.Base(imageURL) for the filename
-				imageName := path.Base(imageURL)
-				imagePath := path.Join(vmStoragePath, imageName)
+				// Verify the file actually exists on Freebox storage with VM-named filename
+				// The final image should be named after the VM (machine.Spec.Name) with the underlying disk extension
+				// For compressed images (.raw.xz, .img.gz, etc.), we strip the compression suffix
+				// For non-compressed images, we keep the original extension
+				sourceName := path.Base(imageURL)
+
+				// Determine the underlying extension (without compression suffix)
+				underlyingName := sourceName
+				compressedExts := []string{".xz", ".gz", ".bz2", ".zip", ".tar"}
+				for _, ext := range compressedExts {
+					if len(underlyingName) > len(ext) && underlyingName[len(underlyingName)-len(ext):] == ext {
+						underlyingName = underlyingName[:len(underlyingName)-len(ext)]
+						break
+					}
+				}
+
+				// Get the extension from the underlying name
+				ext := path.Ext(underlyingName)
+				if ext == "" {
+					ext = ".raw" // Default if no extension found
+				}
+
+				// Expected filename is VM name + extension
+				expectedFileName := createdMachine.Spec.Name + ext
+				imagePath := path.Join(vmStoragePath, expectedFileName)
+
 				fileInfo, err := freeboxClient.GetFileInfo(ctx, imagePath)
 				if err != nil {
-					return fmt.Errorf("failed to get file info for %s: %w", imagePath, err)
+					return fmt.Errorf("failed to get file info for VM-named image %s: %w", imagePath, err)
 				}
 
 				// Verify it's a file and has reasonable size
 				if fileInfo.SizeBytes == 0 {
-					return fmt.Errorf("image file %s exists but has zero size", imagePath)
+					return fmt.Errorf("VM-named image file %s exists but has zero size", imagePath)
 				}
 
 				return nil
 			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
-				"Image should be downloaded and present on Freebox storage for FreeboxMachine %s/%s",
+				"VM-named image should be downloaded and present on Freebox storage for FreeboxMachine %s/%s",
 				createdMachine.Namespace, createdMachine.Name)
 
 			By("Deleting the FreeboxMachine")
