@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
@@ -84,12 +85,38 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			logger.Info("Deleting VM because FreeboxMachine is being deleted")
 
 			vmID := machine.Status.VMID
-			if vmID != 0 {
-				if err := r.FreeboxClient.DeleteVirtualMachine(ctx, vmID); err != nil {
+			if vmID != nil {
+				// Force stop (kill) the VM before deletion - Freebox API requires VMs to be stopped before deletion
+				logger.Info("Force stopping VM before deletion", "vmID", *vmID)
+				if err := r.FreeboxClient.KillVirtualMachine(ctx, *vmID); err != nil {
+					logger.Error(err, "Failed to force stop VM (may already be stopped)")
+					// Don't return error here - the VM might already be stopped
+				}
+
+				// Wait for VM to be fully stopped before attempting deletion
+				logger.Info("Waiting for VM to stop", "vmID", *vmID)
+				for i := 0; i < 30; i++ { // Wait up to 30 seconds
+					vm, err := r.FreeboxClient.GetVirtualMachine(ctx, *vmID)
+					if err != nil {
+						logger.Error(err, "Failed to get VM status while waiting for stop")
+						break
+					}
+
+					if vm.Status == "stopped" {
+						logger.Info("VM is now stopped", "vmID", *vmID)
+						break
+					}
+
+					logger.Info("VM not yet stopped, waiting...", "vmID", *vmID, "status", vm.Status, "attempt", i+1)
+					time.Sleep(1 * time.Second)
+				}
+
+				// Now delete the VM
+				if err := r.FreeboxClient.DeleteVirtualMachine(ctx, *vmID); err != nil {
 					logger.Error(err, "Failed to delete VM")
 					return ctrl.Result{}, err
 				}
-				logger.Info("VM deleted", "vmID", vmID)
+				logger.Info("VM deleted", "vmID", *vmID)
 			}
 
 			// Delete associated disk files
@@ -514,11 +541,22 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "ImageReady",
 				Message: "Image downloaded, extracted, renamed, and resized",
 			})
-			_ = r.Status().Update(ctx, &machine)
-
-			// -----------------------
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				// Ignore conflict errors - another reconcile already updated the object
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status after resize")
+					return ctrl.Result{}, err
+				}
+				logger.Info("Status update conflict, another reconcile already updated - continuing")
+			} // -----------------------
 			// 7. Create VM
 			// -----------------------
+			// Check if VM already exists (in case status update succeeded but reconcile restarted)
+			if machine.Status.VMID != nil {
+				logger.Info("VM already created, skipping VM creation", "vmID", *machine.Status.VMID)
+				return ctrl.Result{}, nil
+			}
+
 			vmPayload := freeboxTypes.VirtualMachinePayload{
 				Name:     machine.Name,
 				DiskPath: freeboxTypes.Base64Path(finalImagePath),
@@ -534,11 +572,20 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				return ctrl.Result{}, err
 			}
 
-			logger.Info("VM created", "vmID", vm.ID)
+			logger.Info("VM created successfully", "vmID", vm.ID, "name", vm.Name)
 
-			// Store VM ID and disk path in status for deletion later
-			machine.Status.VMID = vm.ID
+			// Store VM ID and disk path in status immediately after creation
+			// This ensures we can clean up the VM even if subsequent operations fail
+			machine.Status.VMID = &vm.ID
 			machine.Status.DiskPath = finalImagePath
+
+			// Start the VM
+			if err := r.FreeboxClient.StartVirtualMachine(ctx, vm.ID); err != nil {
+				logger.Error(err, "Failed to start virtual machine")
+				return ctrl.Result{}, err
+			}
+
+			logger.Info("VM started", "vmID", vm.ID)
 
 			// Set initialization.provisioned to true - this signals to CAPI that the machine is ready
 			machine.Status.Initialization.Provisioned = ptr.To(true)
@@ -561,7 +608,14 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "Completed",
 				Message: "phase=done",
 			})
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				// Ignore conflict errors - another reconcile already updated the object
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status after VM creation")
+					return ctrl.Result{}, err
+				}
+				logger.Info("Status update conflict, another reconcile already updated - continuing")
+			}
 
 			return ctrl.Result{}, nil
 		}

@@ -190,6 +190,7 @@ spec:
                 description: |-
                   VMID stores the ID of the created Freebox virtual machine
                   so it can be deleted when the FreeboxMachine is deleted.
+                  Using a pointer allows us to distinguish between "not set" (nil) and "set to 0" (valid first VM).
                 format: int64
                 type: integer
             type: object

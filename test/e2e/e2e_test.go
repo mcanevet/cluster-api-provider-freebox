@@ -109,10 +109,19 @@ var _ = Describe("Freebox Provider Basic Tests", func() {
 				Getter:    clusterProxy.GetClient(),
 				Name:      machineKey.Name,
 				Namespace: machineKey.Namespace,
-			}, e2eConfig.GetIntervals("default", "wait-machine")...)
+			}, e2eConfig.GetIntervals("default", "wait-crd")...) // Use shorter timeout just to check it exists
 
-			By("Verifying the image has been properly downloaded using Freebox API")
+			By("Verifying the image has been properly downloaded and VM created")
+			var vmID *int64
 			Eventually(func() error {
+				// Re-fetch the machine to get the latest status
+				machine := &infrastructurev1alpha1.FreeboxMachine{}
+				key := GetObjectKey(createdMachine)
+				if err := clusterProxy.GetClient().Get(ctx, key, machine); err != nil {
+					return fmt.Errorf("failed to get FreeboxMachine: %w", err)
+				}
+
+				// First check if image file exists
 				// Verify the file actually exists on Freebox storage with VM-named filename
 				// The final image should be named after the VM (machine.Spec.Name) with the underlying disk extension
 				// For compressed images (.raw.xz, .img.gz, etc.), we strip the compression suffix
@@ -136,23 +145,34 @@ var _ = Describe("Freebox Provider Basic Tests", func() {
 				}
 
 				// Expected filename is VM name + extension
-				expectedFileName := createdMachine.Spec.Name + ext
+				expectedFileName := machine.Spec.Name + ext
 				imagePath := path.Join(vmStoragePath, expectedFileName)
 
 				fileInfo, err := freeboxClient.GetFileInfo(ctx, imagePath)
 				if err != nil {
-					return fmt.Errorf("failed to get file info for VM-named image %s: %w", imagePath, err)
+					return fmt.Errorf("VM image file not yet available at %s: %w", imagePath, err)
 				}
 
 				// Verify it's a file and has reasonable size
 				if fileInfo.SizeBytes == 0 {
-					return fmt.Errorf("VM-named image file %s exists but has zero size", imagePath)
+					return fmt.Errorf("VM image file %s exists but has zero size", imagePath)
+				}
+
+				// Now check if VM has been created
+				vmID = machine.Status.VMID
+				if vmID == nil {
+					return fmt.Errorf("VMID not yet set in FreeboxMachine status (image ready, waiting for VM creation)")
+				}
+
+				// Verify the VM exists in Freebox
+				_, err = freeboxClient.GetVirtualMachine(ctx, *vmID)
+				if err != nil {
+					return fmt.Errorf("failed to get VM with ID %d from Freebox: %w", *vmID, err)
 				}
 
 				return nil
 			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
-				"VM-named image should be downloaded and present on Freebox storage for FreeboxMachine %s/%s",
-				createdMachine.Namespace, createdMachine.Name)
+				"Image and VM should be created for FreeboxMachine %s/%s", createdMachine.Namespace, createdMachine.Name)
 
 			By("Deleting the FreeboxMachine")
 			Expect(clusterProxy.GetClient().Delete(ctx, machine)).To(Succeed())
@@ -162,6 +182,18 @@ var _ = Describe("Freebox Provider Basic Tests", func() {
 				Getter:  clusterProxy.GetClient(),
 				Machine: machine,
 			}, e2eConfig.GetIntervals("default", "wait-delete")...)
+
+			By("Verifying the VM has been destroyed on the Freebox")
+			Eventually(func() error {
+				// Verify the VM no longer exists in Freebox
+				_, err := freeboxClient.GetVirtualMachine(ctx, *vmID)
+				if err != nil {
+					// VM not found is expected after deletion
+					return nil
+				}
+				return fmt.Errorf("VM with ID %d still exists on Freebox after FreeboxMachine deletion", *vmID)
+			}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(Succeed(),
+				"VM should be destroyed on Freebox after FreeboxMachine deletion")
 		})
 	})
 })
