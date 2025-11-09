@@ -556,10 +556,20 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				return ctrl.Result{}, nil
 			}
 
+			// Determine disk type based on the final image file extension
+			diskType := freeboxTypes.RawDisk // Default to raw
+			finalExt := strings.ToLower(path.Ext(finalImagePath))
+			if finalExt == ".qcow2" {
+				diskType = freeboxTypes.QCow2Disk
+				logger.Info("Using qcow2 disk type", "imagePath", finalImagePath)
+			} else {
+				logger.Info("Using raw disk type", "imagePath", finalImagePath, "extension", finalExt)
+			}
+
 			vmPayload := freeboxTypes.VirtualMachinePayload{
 				Name:     machine.Name,
 				DiskPath: freeboxTypes.Base64Path(finalImagePath),
-				DiskType: freeboxTypes.RawDisk,
+				DiskType: diskType,
 				Memory:   machine.Spec.MemoryMB, // in MB
 				VCPUs:    machine.Spec.VCPUs,
 				OS:       freeboxTypes.UnknownOS,
