@@ -69,7 +69,7 @@ variables:
   FREEBOX_APP_ID: "cluster-api-provider-freebox"
   FREEBOX_TOKEN: "mock-token"
   FREEBOX_VERSION: "latest"
-  TEST_IMAGE_URL: "https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-nocloud-arm64-daily.qcow2"
+  TEST_IMAGE_URL: "https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-generic-arm64-daily.qcow2"
 
 intervals:
   default/wait-controllers: ["3m", "10s"]

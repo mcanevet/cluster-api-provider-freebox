@@ -73,7 +73,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				vmID                    *int64
 			)
 
-			imageURL := "https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-nocloud-arm64-daily.qcow2"
+			imageURL := "https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-generic-arm64-daily.qcow2"
 			if testImageURL, ok := e2eConfig.Variables["TEST_IMAGE_URL"]; ok {
 				imageURL = testImageURL
 			}
