@@ -1,0 +1,64 @@
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: Cluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks:
+        - 192.168.0.0/16
+    services:
+      cidrBlocks:
+        - 10.96.0.0/12
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+    kind: FreeboxCluster
+    name: ${CLUSTER_NAME}
+    namespace: ${NAMESPACE}
+  controlPlaneRef:
+    apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+    kind: TalosControlPlane
+    name: ${CLUSTER_NAME}-control-plane
+    namespace: ${NAMESPACE}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: FreeboxCluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  foo: "bar"
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+kind: TalosControlPlane
+metadata:
+  name: ${CLUSTER_NAME}-control-plane
+  namespace: ${NAMESPACE}
+spec:
+  version: ${KUBERNETES_VERSION}
+  replicas: 1
+  controlPlaneConfig:
+    controlplane:
+      generateType: controlplane
+      talosVersion: v1.11.5
+  infrastructureTemplate:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+    kind: FreeboxMachineTemplate
+    name: ${CLUSTER_NAME}-control-plane
+    namespace: ${NAMESPACE}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: FreeboxMachineTemplate
+metadata:
+  name: ${CLUSTER_NAME}-control-plane
+  namespace: ${NAMESPACE}
+spec:
+  template:
+    spec:
+      name: ${CLUSTER_NAME}-cp
+      vcpus: 2
+      memoryMB: 4096
+      diskSizeBytes: 21474836480 # 20GB
+      imageURL: https://factory.talos.dev/image/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba/v1.11.5/nocloud-arm64.raw.xz

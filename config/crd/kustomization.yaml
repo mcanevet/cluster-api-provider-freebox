@@ -4,6 +4,7 @@
 resources:
 - bases/infrastructure.cluster.x-k8s.io_freeboxclusters.yaml
 - bases/infrastructure.cluster.x-k8s.io_freeboxmachines.yaml
+- bases/infrastructure.cluster.x-k8s.io_freeboxmachinetemplates.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 labels:

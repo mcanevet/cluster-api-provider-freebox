@@ -1,0 +1,104 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: freeboxmachinetemplates.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: FreeboxMachineTemplate
+    listKind: FreeboxMachineTemplateList
+    plural: freeboxmachinetemplates
+    singular: freeboxmachinetemplate
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: Time duration since creation of FreeboxMachineTemplate
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: FreeboxMachineTemplate is the Schema for the freeboxmachinetemplates
+          API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of FreeboxMachineTemplate
+            properties:
+              template:
+                description: template is the object that describes the machine that
+                  will be created from this template.
+                properties:
+                  spec:
+                    description: spec is the specification of the desired behavior
+                      of the machine.
+                    properties:
+                      diskSizeBytes:
+                        description: Size of the disk in MB
+                        format: int64
+                        type: integer
+                      imageURL:
+                        description: 'Image to use (ex: "debian-bullseye")'
+                        type: string
+                      memoryMB:
+                        description: Size of the RAM in MB
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      name:
+                        description: Name of the VM in the Freebox
+                        type: string
+                      providerID:
+                        description: |-
+                          providerID must match the provider ID as seen on the node object corresponding to this machine.
+                          For Kubernetes Nodes running on the Freebox provider, this value is set by the corresponding CPI component
+                          and it has the format freebox:////<vm-name>.
+                        maxLength: 512
+                        minLength: 1
+                        type: string
+                      vcpus:
+                        description: Number of vCPUs
+                        format: int64
+                        minimum: 1
+                        type: integer
+                    required:
+                    - diskSizeBytes
+                    - imageURL
+                    - memoryMB
+                    - name
+                    - vcpus
+                    type: object
+                required:
+                - spec
+                type: object
+            required:
+            - template
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}

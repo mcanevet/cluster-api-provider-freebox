@@ -1,0 +1,23 @@
+# permissions for end users to view freeboxmachinetemplates.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: cluster-api-provider-freebox
+    app.kubernetes.io/managed-by: kustomize
+  name: freeboxmachinetemplate-viewer-role
+rules:
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
+  - freeboxmachinetemplates
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
+  - freeboxmachinetemplates/status
+  verbs:
+  - get

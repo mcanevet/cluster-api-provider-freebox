@@ -291,4 +291,178 @@ var _ = Describe("Freebox Provider Basic Tests", func() {
 				"VM should be destroyed on Freebox after FreeboxMachine deletion")
 		})
 	})
+
+	Context("FreeboxCluster Lifecycle", Label("PR-Blocking"), func() {
+		It("Should create and delete a FreeboxCluster successfully", func() {
+			By("Creating a FreeboxCluster resource")
+			cluster := &infrastructurev1alpha1.FreeboxCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster",
+					Namespace: namespace.Name,
+				},
+				Spec: infrastructurev1alpha1.FreeboxClusterSpec{},
+			}
+			Expect(clusterProxy.GetClient().Create(ctx, cluster)).To(Succeed())
+
+			clusterKey := GetObjectKey(cluster)
+
+			By("Waiting for the FreeboxCluster to be marked as provisioned")
+			Eventually(func() bool {
+				updatedCluster := &infrastructurev1alpha1.FreeboxCluster{}
+				err := clusterProxy.GetClient().Get(ctx, clusterKey, updatedCluster)
+				if err != nil {
+					return false
+				}
+				return updatedCluster.Status.Initialization.Provisioned != nil &&
+					*updatedCluster.Status.Initialization.Provisioned
+			}, e2eConfig.GetIntervals("default", "wait-vm-start")...).Should(BeTrue())
+
+			By("Verifying the FreeboxCluster has a Ready condition")
+			updatedCluster := &infrastructurev1alpha1.FreeboxCluster{}
+			Expect(clusterProxy.GetClient().Get(ctx, clusterKey, updatedCluster)).To(Succeed())
+
+			// Check for Ready condition
+			hasReadyCondition := false
+			for _, condition := range updatedCluster.Status.Conditions {
+				if condition.Type == "Ready" && condition.Status == metav1.ConditionTrue {
+					hasReadyCondition = true
+					break
+				}
+			}
+			Expect(hasReadyCondition).To(BeTrue(), "FreeboxCluster should have a Ready=True condition")
+
+			By("Deleting the FreeboxCluster")
+			Expect(clusterProxy.GetClient().Delete(ctx, cluster)).To(Succeed())
+
+			By("Waiting for the FreeboxCluster to be deleted")
+			Eventually(func() bool {
+				err := clusterProxy.GetClient().Get(ctx, clusterKey,
+					&infrastructurev1alpha1.FreeboxCluster{})
+				return err != nil
+			}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(BeTrue())
+		})
+
+		It("Should work with FreeboxMachines in the same namespace", func() {
+			By("Creating a FreeboxCluster resource")
+			cluster := &infrastructurev1alpha1.FreeboxCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster-with-machine",
+					Namespace: namespace.Name,
+				},
+				Spec: infrastructurev1alpha1.FreeboxClusterSpec{},
+			}
+			Expect(clusterProxy.GetClient().Create(ctx, cluster)).To(Succeed())
+
+			clusterKey := GetObjectKey(cluster)
+
+			By("Waiting for the FreeboxCluster to be provisioned")
+			Eventually(func() bool {
+				updatedCluster := &infrastructurev1alpha1.FreeboxCluster{}
+				err := clusterProxy.GetClient().Get(ctx, clusterKey, updatedCluster)
+				if err != nil {
+					return false
+				}
+				return updatedCluster.Status.Initialization.Provisioned != nil &&
+					*updatedCluster.Status.Initialization.Provisioned
+			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(BeTrue())
+
+			By("Creating a FreeboxMachine resource with cluster label")
+			imageURL := "https://cloud-images.ubuntu.com/minimal/releases/jammy/release/ubuntu-22.04-minimal-cloudimg-amd64.img"
+			machine := &infrastructurev1alpha1.FreeboxMachine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-vm-for-cluster",
+					Namespace: namespace.Name,
+					Labels: map[string]string{
+						"cluster.x-k8s.io/cluster-name": cluster.Name,
+					},
+				},
+				Spec: infrastructurev1alpha1.FreeboxMachineSpec{
+					Name:          "test-vm-for-cluster",
+					ImageURL:      imageURL,
+					VCPUs:         1,
+					MemoryMB:      2048,
+					DiskSizeBytes: 10 * 1024 * 1024 * 1024, // 10GB
+				},
+			}
+			Expect(clusterProxy.GetClient().Create(ctx, machine)).To(Succeed())
+
+			machineKey := GetObjectKey(machine)
+
+			By("Verifying the FreeboxMachine can be created alongside the cluster")
+			Eventually(func() bool {
+				updatedMachine := &infrastructurev1alpha1.FreeboxMachine{}
+				err := clusterProxy.GetClient().Get(ctx, machineKey, updatedMachine)
+				return err == nil
+			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(BeTrue())
+
+			By("Deleting the FreeboxMachine")
+			Expect(clusterProxy.GetClient().Delete(ctx, machine)).To(Succeed())
+
+			By("Waiting for the FreeboxMachine to be deleted")
+			Eventually(func() bool {
+				err := clusterProxy.GetClient().Get(ctx, machineKey,
+					&infrastructurev1alpha1.FreeboxMachine{})
+				return err != nil
+			}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(BeTrue())
+
+			By("Deleting the FreeboxCluster")
+			Expect(clusterProxy.GetClient().Delete(ctx, cluster)).To(Succeed())
+
+			By("Waiting for the FreeboxCluster to be deleted")
+			Eventually(func() bool {
+				err := clusterProxy.GetClient().Get(ctx, clusterKey,
+					&infrastructurev1alpha1.FreeboxCluster{})
+				return err != nil
+			}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(BeTrue())
+		})
+	})
+
+	Context("FreeboxMachineTemplate", Label("PR-Blocking"), func() {
+		It("Should have FreeboxMachineTemplate CRD available", func() {
+			By("Listing FreeboxMachineTemplate resources")
+			templateList := &infrastructurev1alpha1.FreeboxMachineTemplateList{}
+			Eventually(func() error {
+				return clusterProxy.GetClient().List(ctx, templateList)
+			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed())
+		})
+
+		It("Should create and delete a FreeboxMachineTemplate successfully", func() {
+			By("Creating a FreeboxMachineTemplate resource")
+			template := &infrastructurev1alpha1.FreeboxMachineTemplate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-template",
+					Namespace: namespace.Name,
+				},
+				Spec: infrastructurev1alpha1.FreeboxMachineTemplateSpec{
+					Template: infrastructurev1alpha1.FreeboxMachineTemplateResource{
+						Spec: infrastructurev1alpha1.FreeboxMachineSpec{
+							Name:          "test-vm-from-template",
+							VCPUs:         2,
+							MemoryMB:      4096,
+							ImageURL:      "https://factory.talos.dev/image/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba/v1.11.5/nocloud-arm64.raw.xz",
+							DiskSizeBytes: 21474836480, // 20GB
+						},
+					},
+				},
+			}
+			Expect(clusterProxy.GetClient().Create(ctx, template)).To(Succeed())
+
+			templateKey := GetObjectKey(template)
+
+			By("Verifying the FreeboxMachineTemplate was created")
+			Eventually(func() error {
+				return clusterProxy.GetClient().Get(ctx, templateKey, template)
+			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed())
+
+			By("Deleting the FreeboxMachineTemplate")
+			Expect(clusterProxy.GetClient().Delete(ctx, template)).To(Succeed())
+
+			By("Waiting for the FreeboxMachineTemplate to be deleted")
+			Eventually(func() bool {
+				err := clusterProxy.GetClient().Get(ctx, templateKey,
+					&infrastructurev1alpha1.FreeboxMachineTemplate{})
+				return err != nil
+			}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(BeTrue())
+		})
+	})
 })

@@ -25,3 +25,9 @@ go.work
 *.swp
 *.swo
 *~
+
+# mise local configuration
+.mise.local.toml
+
+# E2E test artifacts
+_artifacts/

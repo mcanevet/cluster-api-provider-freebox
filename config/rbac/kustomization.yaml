@@ -25,6 +25,8 @@ resources:
 - freeboxmachine_admin_role.yaml
 - freeboxmachine_editor_role.yaml
 - freeboxmachine_viewer_role.yaml
+- freeboxmachinetemplate_editor_role.yaml
+- freeboxmachinetemplate_viewer_role.yaml
 - freeboxcluster_admin_role.yaml
 - freeboxcluster_editor_role.yaml
 - freeboxcluster_viewer_role.yaml
