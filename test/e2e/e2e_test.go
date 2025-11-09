@@ -22,6 +22,7 @@ package e2e
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -173,7 +174,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 
 			// Set KubeadmControlPlane spec
 			Expect(unstructured.SetNestedField(kubeadmControlPlane.Object, int64(1), "spec", "replicas")).To(Succeed())
-			Expect(unstructured.SetNestedField(kubeadmControlPlane.Object, "v1.31.0", "spec", "version")).To(Succeed())
+			Expect(unstructured.SetNestedField(kubeadmControlPlane.Object, "v1.34.0", "spec", "version")).To(Succeed())
 
 			// Set machine template
 			machineTemplate := map[string]interface{}{
@@ -187,6 +188,25 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 
 			// Set KubeadmConfigSpec with test markers to verify bootstrap data
 			kubeadmConfigSpec := map[string]interface{}{
+				"clusterConfiguration": map[string]interface{}{
+					"controlPlaneEndpoint": "192.168.1.202:6443",
+					"apiServer": map[string]interface{}{
+						"certSANs": []interface{}{
+							"192.168.1.202",
+						},
+					},
+				},
+				// Add debug user for troubleshooting
+				"users": []interface{}{
+					map[string]interface{}{
+						"name":  "debug",
+						"sudo":  "ALL=(ALL) NOPASSWD:ALL",
+						"shell": "/bin/bash",
+						"sshAuthorizedKeys": []interface{}{
+							"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL8xu4/dL0Oz2RgIwu7egeQiZFefcyTKttBfMM/7imoD",
+						},
+					},
+				},
 				"files": []interface{}{
 					map[string]interface{}{
 						"path":        "/etc/bootstrap-test-marker",
@@ -197,13 +217,21 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				},
 				"preKubeadmCommands": []interface{}{
 					"echo 'Bootstrap test completed' > /var/log/bootstrap-test.log",
+					// Add control plane endpoint IP as secondary IP
+					"ip addr add 192.168.1.202/24 dev enp0s5 || true",
+					// Enable IP forwarding and bridge netfilter
+					"modprobe br_netfilter",
+					"echo 1 > /proc/sys/net/ipv4/ip_forward",
+					"echo 1 > /proc/sys/net/bridge/bridge-nf-call-iptables",
+					"cat <<EOF > /etc/sysctl.d/k8s.conf\nnet.bridge.bridge-nf-call-iptables = 1\nnet.bridge.bridge-nf-call-ip6tables = 1\nnet.ipv4.ip_forward = 1\nEOF",
+					"sysctl --system",
 					// Install dependencies
 					"apt-get update",
 					"apt-get install -y apt-transport-https ca-certificates curl gpg",
 					// Add Kubernetes apt repository
 					"mkdir -p /etc/apt/keyrings",
-					"curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg",
-					"echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' > /etc/apt/sources.list.d/kubernetes.list",
+					"curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg",
+					"echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /' > /etc/apt/sources.list.d/kubernetes.list",
 					// Install Kubernetes components
 					"apt-get update",
 					"apt-get install -y kubelet kubeadm kubectl containerd",
@@ -364,14 +392,26 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				"VM should have bootstrap data from CABPK with test markers")
 
 			By("Verifying FreeboxMachine has IP addresses populated")
+			var vmIPAddress string
 			Eventually(func() bool {
 				machine := &infrastructurev1alpha1.FreeboxMachine{}
 				if err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxMachine), machine); err != nil {
 					return false
 				}
-				return len(machine.Status.Addresses) > 0
+				if len(machine.Status.Addresses) > 0 {
+					vmIPAddress = machine.Status.Addresses[0].Address
+					return true
+				}
+				return false
 			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(BeTrue(),
 				"FreeboxMachine should have IP addresses")
+
+			By(fmt.Sprintf("VM is ready for debugging - IP: %s, User: debug (SSH key auth)", vmIPAddress))
+			By("Waiting 5 minutes for manual debugging - you can SSH to the VM to check cloud-init logs")
+			By("SSH command: ssh debug@" + vmIPAddress)
+			By("Check cloud-init logs: sudo tail -f /var/log/cloud-init-output.log")
+			By("Check bootstrap marker: cat /etc/bootstrap-test-marker")
+			time.Sleep(5 * time.Minute)
 
 			By("Cleaning up test resources in correct order")
 			// Delete in reverse order of dependencies
