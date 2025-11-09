@@ -24,19 +24,18 @@ import (
 	"strings"
 	"time"
 
+	freeboxclient "github.com/nikolalohinski/free-go/client"
+	freeboxTypes "github.com/nikolalohinski/free-go/types"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	freeboxclient "github.com/nikolalohinski/free-go/client"
-	freeboxTypes "github.com/nikolalohinski/free-go/types"
-
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
