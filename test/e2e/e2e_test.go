@@ -78,7 +78,7 @@ var _ = Describe("Freebox Provider Basic Tests", func() {
 		It("Should create and delete a FreeboxMachine successfully", func() {
 			By("Creating a FreeboxMachine resource")
 
-			imageURL := "https://cloud-images.ubuntu.com/minimal/releases/jammy/release/ubuntu-22.04-minimal-cloudimg-amd64.img"
+			imageURL := "https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-nocloud-arm64-daily.qcow2"
 			if testImageURL, ok := e2eConfig.Variables["TEST_IMAGE_URL"]; ok {
 				imageURL = testImageURL
 			}
@@ -367,7 +367,7 @@ var _ = Describe("Freebox Provider Basic Tests", func() {
 			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(BeTrue())
 
 			By("Creating a FreeboxMachine resource with cluster label")
-			imageURL := "https://cloud-images.ubuntu.com/minimal/releases/jammy/release/ubuntu-22.04-minimal-cloudimg-amd64.img"
+			imageURL := "https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-nocloud-arm64-daily.qcow2"
 			machine := &infrastructurev1alpha1.FreeboxMachine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-vm-for-cluster",
