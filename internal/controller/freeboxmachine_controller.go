@@ -31,6 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -548,12 +549,73 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}
 				logger.Info("Status update conflict, another reconcile already updated - continuing")
 			} // -----------------------
-			// 7. Create VM
+			// 7. Create VM (or check IP if already created)
 			// -----------------------
 			// Check if VM already exists (in case status update succeeded but reconcile restarted)
 			if machine.Status.VMID != nil {
-				logger.Info("VM already created, skipping VM creation", "vmID", *machine.Status.VMID)
-				return ctrl.Result{}, nil
+				logger.Info("VM already created, checking for IP address", "vmID", *machine.Status.VMID)
+
+				// VM exists, but we might still need to populate IP address
+				// Check if addresses are already populated
+				if len(machine.Status.Addresses) > 0 {
+					// Addresses already set, nothing more to do
+					logger.Info("VM already has IP addresses", "vmID", *machine.Status.VMID, "addresses", machine.Status.Addresses)
+					return ctrl.Result{}, nil
+				}
+
+				// Try to get the VM to retrieve its MAC address
+				vm, err := r.FreeboxClient.GetVirtualMachine(ctx, *machine.Status.VMID)
+				if err != nil {
+					logger.Error(err, "Failed to get VM details")
+					return ctrl.Result{}, err
+				}
+
+				// Try to get IP address from LAN browser
+				lanHosts, err := r.FreeboxClient.GetLanInterface(ctx, "pub")
+				if err != nil {
+					logger.Error(err, "Failed to query LAN browser")
+					// Don't fail the reconciliation, just requeue to try again
+					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+				}
+
+				logger.Info("Searching for VM in LAN browser", "vmID", *machine.Status.VMID, "vmMac", vm.Mac, "totalHosts", len(lanHosts))
+
+				// Find the host with matching MAC address (case-insensitive comparison)
+				foundHost := false
+				vmMacLower := strings.ToLower(vm.Mac)
+				for _, host := range lanHosts {
+					hostMacLower := strings.ToLower(host.L2Ident.ID)
+					if hostMacLower == vmMacLower {
+						foundHost = true
+						// Extract IPv4 addresses from L3Connectivities
+						var addresses []clusterv1.MachineAddress
+						for _, l3 := range host.L3Connectivities {
+							if l3.Type == "ipv4" && l3.Address != "" {
+								addresses = append(addresses, clusterv1.MachineAddress{
+									Type:    clusterv1.MachineInternalIP,
+									Address: l3.Address,
+								})
+							}
+						}
+						if len(addresses) > 0 {
+							machine.Status.Addresses = addresses
+							logger.Info("Found IP address for existing VM", "vmID", *machine.Status.VMID, "mac", vm.Mac, "addresses", addresses)
+							if err := r.Status().Update(ctx, &machine); err != nil {
+								logger.Error(err, "Failed to update FreeboxMachine status with addresses")
+								return ctrl.Result{}, err
+							}
+							return ctrl.Result{}, nil
+						} else {
+							logger.Info("VM found in LAN browser but no IP address yet, will retry", "vmID", *machine.Status.VMID, "mac", vm.Mac)
+							return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+						}
+					}
+				}
+
+				if !foundHost {
+					logger.Info("VM not yet visible in LAN browser, will retry", "vmID", *machine.Status.VMID, "mac", vm.Mac)
+					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+				}
 			}
 
 			// Determine disk type based on the final image file extension
@@ -595,6 +657,61 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 
 			logger.Info("VM started", "vmID", vm.ID)
+
+			// Try to get IP address from LAN browser
+			// Query the LAN browser for hosts on the "pub" interface
+			lanHosts, err := r.FreeboxClient.GetLanInterface(ctx, "pub")
+			if err != nil {
+				logger.Error(err, "Failed to query LAN browser")
+				// Don't fail the reconciliation, just log and continue without addresses
+			} else {
+				logger.Info("Searching for VM in LAN browser", "vmID", vm.ID, "vmMac", vm.Mac, "totalHosts", len(lanHosts))
+				// Find the host with matching MAC address (case-insensitive comparison)
+				foundHost := false
+				vmMacLower := strings.ToLower(vm.Mac)
+				for _, host := range lanHosts {
+					hostMacLower := strings.ToLower(host.L2Ident.ID)
+					if hostMacLower == vmMacLower {
+						foundHost = true
+						// Extract IPv4 addresses from L3Connectivities
+						var addresses []clusterv1.MachineAddress
+						for _, l3 := range host.L3Connectivities {
+							if l3.Type == "ipv4" && l3.Address != "" {
+								addresses = append(addresses, clusterv1.MachineAddress{
+									Type:    clusterv1.MachineInternalIP,
+									Address: l3.Address,
+								})
+							}
+						}
+						if len(addresses) > 0 {
+							machine.Status.Addresses = addresses
+							logger.Info("Found IP address for VM", "vmID", vm.ID, "mac", vm.Mac, "addresses", addresses)
+						} else {
+							logger.Info("VM found in LAN browser but no IP address yet, will retry", "vmID", vm.ID, "mac", vm.Mac)
+							// VM is in LAN browser but no IP yet - requeue to check again
+							machine.Status.VMID = &vm.ID
+							machine.Status.DiskPath = finalImagePath
+							if err := r.Status().Update(ctx, &machine); err != nil {
+								logger.Error(err, "Failed to update FreeboxMachine status")
+								return ctrl.Result{}, err
+							}
+							return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+						}
+						break
+					}
+				}
+				if !foundHost {
+					logger.Info("VM not yet visible in LAN browser, will retry", "vmID", vm.ID, "mac", vm.Mac)
+					// VM not yet in LAN browser - requeue to check again
+					machine.Status.VMID = &vm.ID
+					machine.Status.DiskPath = finalImagePath
+					if err := r.Status().Update(ctx, &machine); err != nil {
+						logger.Error(err, "Failed to update FreeboxMachine status")
+						return ctrl.Result{}, err
+					}
+					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+				}
+			}
 
 			// Set initialization.provisioned to true - this signals to CAPI that the machine is ready
 			machine.Status.Initialization.Provisioned = ptr.To(true)

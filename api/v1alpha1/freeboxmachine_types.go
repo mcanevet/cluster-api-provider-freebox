@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -76,6 +77,10 @@ type FreeboxMachineStatus struct {
 	// DiskPath stores the path to the VM disk file
 	// so it can be deleted when the FreeboxMachine is deleted.
 	DiskPath string `json:"diskPath,omitempty"`
+
+	// Addresses contains the associated addresses for the machine.
+	// +optional
+	Addresses []clusterv1.MachineAddress `json:"addresses,omitempty"`
 }
 
 // FreeboxMachineInitializationStatus provides observations of the FreeboxMachine initialization process.

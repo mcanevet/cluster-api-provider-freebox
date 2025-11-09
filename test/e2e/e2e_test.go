@@ -174,6 +174,36 @@ var _ = Describe("Freebox Provider Basic Tests", func() {
 			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
 				"Image and VM should be created for FreeboxMachine %s/%s", createdMachine.Namespace, createdMachine.Name)
 
+			By("Verifying the VM has an IP address in status.addresses")
+			Eventually(func() error {
+				// Re-fetch the machine to get the latest status
+				machine := &infrastructurev1alpha1.FreeboxMachine{}
+				key := GetObjectKey(createdMachine)
+				if err := clusterProxy.GetClient().Get(ctx, key, machine); err != nil {
+					return fmt.Errorf("failed to get FreeboxMachine: %w", err)
+				}
+
+				// Check if addresses are populated
+				if len(machine.Status.Addresses) == 0 {
+					return fmt.Errorf("status.addresses is empty")
+				}
+
+				// Verify at least one address is present and non-empty
+				hasValidIP := false
+				for _, addr := range machine.Status.Addresses {
+					if addr.Address != "" {
+						hasValidIP = true
+						break
+					}
+				}
+				if !hasValidIP {
+					return fmt.Errorf("status.addresses contains entries but no valid IP address")
+				}
+
+				return nil
+			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+				"IP address should be populated in status.addresses for FreeboxMachine %s/%s", createdMachine.Namespace, createdMachine.Name)
+
 			By("Deleting the FreeboxMachine")
 			Expect(clusterProxy.GetClient().Delete(ctx, machine)).To(Succeed())
 
