@@ -143,6 +143,9 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	clusterctl.InitManagementClusterAndWatchControllerLogs(ctx, clusterctl.InitManagementClusterAndWatchControllerLogsInput{
 		ClusterProxy:            clusterProxy,
 		ClusterctlConfigPath:    clusterctlConfigPath,
+		CoreProvider:            e2eConfig.GetProviderLatestVersionsByContract("v1beta1", "cluster-api")[0],
+		BootstrapProviders:      e2eConfig.GetProviderLatestVersionsByContract("v1beta1", "kubeadm"),
+		ControlPlaneProviders:   e2eConfig.GetProviderLatestVersionsByContract("v1beta1", "kubeadm"),
 		InfrastructureProviders: e2eConfig.InfrastructureProviders(),
 		LogFolder:               filepath.Join(artifactFolder, "clusters", clusterProxy.GetName()),
 	}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-controllers")...)

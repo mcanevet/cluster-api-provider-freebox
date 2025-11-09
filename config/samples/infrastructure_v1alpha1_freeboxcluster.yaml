@@ -6,4 +6,6 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: freeboxcluster-sample
 spec:
-  # TODO(user): Add fields here
+  controlPlaneEndpoint:
+    host: "192.168.1.100"
+    port: 6443

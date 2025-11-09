@@ -26,12 +26,15 @@ import (
 
 	freeboxclient "github.com/nikolalohinski/free-go/client"
 	freeboxTypes "github.com/nikolalohinski/free-go/types"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/util"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -60,6 +63,7 @@ type FreeboxMachineReconciler struct {
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=freeboxmachines/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=freeboxmachines/finalizers,verbs=update
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines;machines/status,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -618,6 +622,51 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}
 			}
 
+			// -----------------------
+			// Get Machine owner and bootstrap data
+			// -----------------------
+			// Get the Machine that owns this FreeboxMachine
+			ownerMachine, err := util.GetOwnerMachine(ctx, r.Client, machine.ObjectMeta)
+			if err != nil {
+				logger.Error(err, "Failed to get owner Machine")
+				return ctrl.Result{}, err
+			}
+			if ownerMachine == nil {
+				logger.Info("FreeboxMachine has no owner Machine yet, waiting")
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			}
+
+			logger.Info("Found owner Machine", "machineName", ownerMachine.Name, "namespace", ownerMachine.Namespace)
+
+			// Check if bootstrap data is ready
+			if ownerMachine.Spec.Bootstrap.DataSecretName == nil {
+				logger.Info("Bootstrap data secret not ready yet, waiting", "machineName", ownerMachine.Name)
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			}
+
+			logger.Info("Bootstrap data secret is ready", "secretName", *ownerMachine.Spec.Bootstrap.DataSecretName)
+
+			// Read the bootstrap data secret
+			bootstrapSecret := &corev1.Secret{}
+			secretKey := types.NamespacedName{
+				Namespace: ownerMachine.Namespace,
+				Name:      *ownerMachine.Spec.Bootstrap.DataSecretName,
+			}
+			if err := r.Get(ctx, secretKey, bootstrapSecret); err != nil {
+				logger.Error(err, "Failed to get bootstrap data secret", "secretName", secretKey.Name)
+				return ctrl.Result{}, err
+			}
+
+			// Extract bootstrap data from the secret
+			// The bootstrap data is stored in the "value" key
+			bootstrapData, ok := bootstrapSecret.Data["value"]
+			if !ok {
+				logger.Error(fmt.Errorf("bootstrap secret missing 'value' key"), "Invalid bootstrap secret", "secretName", secretKey.Name)
+				return ctrl.Result{}, fmt.Errorf("bootstrap secret %s missing 'value' key", secretKey.Name)
+			}
+
+			logger.Info("Successfully retrieved bootstrap data", "secretName", secretKey.Name, "dataSize", len(bootstrapData))
+
 			// Determine disk type based on the final image file extension
 			diskType := freeboxTypes.RawDisk // Default to raw
 			finalExt := strings.ToLower(path.Ext(finalImagePath))
@@ -629,12 +678,14 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 
 			vmPayload := freeboxTypes.VirtualMachinePayload{
-				Name:     machine.Name,
-				DiskPath: freeboxTypes.Base64Path(finalImagePath),
-				DiskType: diskType,
-				Memory:   machine.Spec.MemoryMB, // in MB
-				VCPUs:    machine.Spec.VCPUs,
-				OS:       freeboxTypes.UnknownOS,
+				Name:              machine.Name,
+				DiskPath:          freeboxTypes.Base64Path(finalImagePath),
+				DiskType:          diskType,
+				Memory:            machine.Spec.MemoryMB, // in MB
+				VCPUs:             machine.Spec.VCPUs,
+				OS:                freeboxTypes.UnknownOS,
+				EnableCloudInit:   true,
+				CloudInitUserData: string(bootstrapData),
 			}
 
 			vm, err := r.FreeboxClient.CreateVirtualMachine(ctx, vmPayload)

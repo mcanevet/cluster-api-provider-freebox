@@ -21,17 +21,21 @@ package e2e
 
 import (
 	"fmt"
-	"path"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
 )
 
-var _ = Describe("Freebox Provider Basic Tests", func() {
+var _ = Describe("Freebox Provider E2E Tests", func() {
 	var (
 		namespace *corev1.Namespace
 	)
@@ -56,348 +60,343 @@ var _ = Describe("Freebox Provider Basic Tests", func() {
 		}
 	})
 
-	Context("CRD Installation", func() {
-		It("Should have FreeboxMachine CRD available", func() {
-			By("Listing FreeboxMachine resources")
-			machineList := &infrastructurev1alpha1.FreeboxMachineList{}
-			Eventually(func() error {
-				return clusterProxy.GetClient().List(ctx, machineList)
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed())
-		})
-
-		It("Should have FreeboxCluster CRD available", func() {
-			By("Listing FreeboxCluster resources")
-			clusterList := &infrastructurev1alpha1.FreeboxClusterList{}
-			Eventually(func() error {
-				return clusterProxy.GetClient().List(ctx, clusterList)
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed())
-		})
-	})
-
-	Context("FreeboxMachine Lifecycle", Label("PR-Blocking"), func() {
-		It("Should create and delete a FreeboxMachine successfully", func() {
-			By("Creating a FreeboxMachine resource")
+	Context("Full CAPI Cluster Lifecycle with KubeadmControlPlane", Label("PR-Blocking"), func() {
+		It("Should create a complete CAPI cluster with bootstrap data and verify all components", func() {
+			var (
+				freeboxCluster          *infrastructurev1alpha1.FreeboxCluster
+				capiCluster             *unstructured.Unstructured
+				freeboxMachineTemplate  *infrastructurev1alpha1.FreeboxMachineTemplate
+				kubeadmControlPlane     *unstructured.Unstructured
+				createdMachine          *unstructured.Unstructured
+				freeboxMachine          *infrastructurev1alpha1.FreeboxMachine
+				bootstrapDataSecretName string
+				vmID                    *int64
+			)
 
 			imageURL := "https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-nocloud-arm64-daily.qcow2"
 			if testImageURL, ok := e2eConfig.Variables["TEST_IMAGE_URL"]; ok {
 				imageURL = testImageURL
 			}
 
-			// vmStoragePath is set from the Freebox /system/ API in the suite setup
-			vmStoragePath, ok := e2eConfig.Variables["VM_STORAGE_PATH"]
-			Expect(ok).To(BeTrue(), "VM_STORAGE_PATH should be set by suite from /system/ user_main_storage")
-
-			machine := &infrastructurev1alpha1.FreeboxMachine{
-				ObjectMeta: metav1.ObjectMeta{
-					GenerateName: "test-machine-",
-					Namespace:    namespace.Name,
-				},
-				Spec: infrastructurev1alpha1.FreeboxMachineSpec{
-					Name:          "test-vm",
-					VCPUs:         1,
-					MemoryMB:      2048,
-					ImageURL:      imageURL,
-					DiskSizeBytes: 10737418240, // 10GB
-				},
-			}
-
-			Expect(clusterProxy.GetClient().Create(ctx, machine)).To(Succeed())
-			machineKey := GetObjectKey(machine)
-
-			By("Waiting for the FreeboxMachine to be created")
-			createdMachine := GetFreeboxMachine(ctx, GetFreeboxMachineInput{
-				Getter:    clusterProxy.GetClient(),
-				Name:      machineKey.Name,
-				Namespace: machineKey.Namespace,
-			}, e2eConfig.GetIntervals("default", "wait-crd")...) // Use shorter timeout just to check it exists
-
-			By("Verifying the image has been properly downloaded and VM created")
-			var vmID *int64
-			Eventually(func() error {
-				// Re-fetch the machine to get the latest status
-				machine := &infrastructurev1alpha1.FreeboxMachine{}
-				key := GetObjectKey(createdMachine)
-				if err := clusterProxy.GetClient().Get(ctx, key, machine); err != nil {
-					return fmt.Errorf("failed to get FreeboxMachine: %w", err)
-				}
-
-				// First check if image file exists
-				// Verify the file actually exists on Freebox storage with VM-named filename
-				// The final image should be named after the VM (machine.Spec.Name) with the underlying disk extension
-				// For compressed images (.raw.xz, .img.gz, etc.), we strip the compression suffix
-				// For non-compressed images, we keep the original extension
-				sourceName := path.Base(imageURL)
-
-				// Determine the underlying extension (without compression suffix)
-				underlyingName := sourceName
-				compressedExts := []string{".xz", ".gz", ".bz2", ".zip", ".tar"}
-				for _, ext := range compressedExts {
-					if len(underlyingName) > len(ext) && underlyingName[len(underlyingName)-len(ext):] == ext {
-						underlyingName = underlyingName[:len(underlyingName)-len(ext)]
-						break
-					}
-				}
-
-				// Get the extension from the underlying name
-				ext := path.Ext(underlyingName)
-				if ext == "" {
-					ext = ".raw" // Default if no extension found
-				}
-
-				// Expected filename is VM name + extension
-				expectedFileName := machine.Spec.Name + ext
-				imagePath := path.Join(vmStoragePath, expectedFileName)
-
-				fileInfo, err := freeboxClient.GetFileInfo(ctx, imagePath)
-				if err != nil {
-					return fmt.Errorf("VM image file not yet available at %s: %w", imagePath, err)
-				}
-
-				// Verify it's a file and has reasonable size
-				if fileInfo.SizeBytes == 0 {
-					return fmt.Errorf("VM image file %s exists but has zero size", imagePath)
-				}
-
-				// Now check if VM has been created
-				vmID = machine.Status.VMID
-				if vmID == nil {
-					return fmt.Errorf("VMID not yet set in FreeboxMachine status (image ready, waiting for VM creation)")
-				}
-
-				// Verify the VM exists in Freebox
-				_, err = freeboxClient.GetVirtualMachine(ctx, *vmID)
-				if err != nil {
-					return fmt.Errorf("failed to get VM with ID %d from Freebox: %w", *vmID, err)
-				}
-
-				return nil
-			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
-				"Image and VM should be created for FreeboxMachine %s/%s", createdMachine.Namespace, createdMachine.Name)
-
-			By("Verifying the VM has an IP address in status.addresses")
-			Eventually(func() error {
-				// Re-fetch the machine to get the latest status
-				machine := &infrastructurev1alpha1.FreeboxMachine{}
-				key := GetObjectKey(createdMachine)
-				if err := clusterProxy.GetClient().Get(ctx, key, machine); err != nil {
-					return fmt.Errorf("failed to get FreeboxMachine: %w", err)
-				}
-
-				// Check if addresses are populated
-				if len(machine.Status.Addresses) == 0 {
-					return fmt.Errorf("status.addresses is empty")
-				}
-
-				// Verify at least one address is present and non-empty
-				hasValidIP := false
-				for _, addr := range machine.Status.Addresses {
-					if addr.Address != "" {
-						hasValidIP = true
-						break
-					}
-				}
-				if !hasValidIP {
-					return fmt.Errorf("status.addresses contains entries but no valid IP address")
-				}
-
-				return nil
-			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
-				"IP address should be populated in status.addresses for FreeboxMachine %s/%s", createdMachine.Namespace, createdMachine.Name)
-
-			By("Deleting the FreeboxMachine")
-			Expect(clusterProxy.GetClient().Delete(ctx, machine)).To(Succeed())
-
-			By("Waiting for the FreeboxMachine to be deleted")
-			WaitForFreeboxMachineDeleted(ctx, WaitForFreeboxMachineDeletedInput{
-				Getter:  clusterProxy.GetClient(),
-				Machine: machine,
-			}, e2eConfig.GetIntervals("default", "wait-delete")...)
-
-			By("Verifying the VM has been destroyed on the Freebox")
-			Eventually(func() error {
-				// Verify the VM no longer exists in Freebox
-				_, err := freeboxClient.GetVirtualMachine(ctx, *vmID)
-				if err != nil {
-					// VM not found is expected after deletion
-					return nil
-				}
-				return fmt.Errorf("VM with ID %d still exists on Freebox after FreeboxMachine deletion", *vmID)
-			}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(Succeed(),
-				"VM should be destroyed on Freebox after FreeboxMachine deletion")
-		})
-	})
-
-	Context("FreeboxCluster Lifecycle", Label("PR-Blocking"), func() {
-		It("Should create and delete a FreeboxCluster successfully", func() {
-			By("Creating a FreeboxCluster resource")
-			cluster := &infrastructurev1alpha1.FreeboxCluster{
+			By("Creating a FreeboxCluster (infrastructure)")
+			freeboxCluster = &infrastructurev1alpha1.FreeboxCluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-cluster",
 					Namespace: namespace.Name,
 				},
-				Spec: infrastructurev1alpha1.FreeboxClusterSpec{},
-			}
-			Expect(clusterProxy.GetClient().Create(ctx, cluster)).To(Succeed())
-
-			clusterKey := GetObjectKey(cluster)
-
-			By("Waiting for the FreeboxCluster to be marked as provisioned")
-			Eventually(func() bool {
-				updatedCluster := &infrastructurev1alpha1.FreeboxCluster{}
-				err := clusterProxy.GetClient().Get(ctx, clusterKey, updatedCluster)
-				if err != nil {
-					return false
-				}
-				return updatedCluster.Status.Initialization.Provisioned != nil &&
-					*updatedCluster.Status.Initialization.Provisioned
-			}, e2eConfig.GetIntervals("default", "wait-vm-start")...).Should(BeTrue())
-
-			By("Verifying the FreeboxCluster has a Ready condition")
-			updatedCluster := &infrastructurev1alpha1.FreeboxCluster{}
-			Expect(clusterProxy.GetClient().Get(ctx, clusterKey, updatedCluster)).To(Succeed())
-
-			// Check for Ready condition
-			hasReadyCondition := false
-			for _, condition := range updatedCluster.Status.Conditions {
-				if condition.Type == "Ready" && condition.Status == metav1.ConditionTrue {
-					hasReadyCondition = true
-					break
-				}
-			}
-			Expect(hasReadyCondition).To(BeTrue(), "FreeboxCluster should have a Ready=True condition")
-
-			By("Deleting the FreeboxCluster")
-			Expect(clusterProxy.GetClient().Delete(ctx, cluster)).To(Succeed())
-
-			By("Waiting for the FreeboxCluster to be deleted")
-			Eventually(func() bool {
-				err := clusterProxy.GetClient().Get(ctx, clusterKey,
-					&infrastructurev1alpha1.FreeboxCluster{})
-				return err != nil
-			}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(BeTrue())
-		})
-
-		It("Should work with FreeboxMachines in the same namespace", func() {
-			By("Creating a FreeboxCluster resource")
-			cluster := &infrastructurev1alpha1.FreeboxCluster{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-cluster-with-machine",
-					Namespace: namespace.Name,
-				},
-				Spec: infrastructurev1alpha1.FreeboxClusterSpec{},
-			}
-			Expect(clusterProxy.GetClient().Create(ctx, cluster)).To(Succeed())
-
-			clusterKey := GetObjectKey(cluster)
-
-			By("Waiting for the FreeboxCluster to be provisioned")
-			Eventually(func() bool {
-				updatedCluster := &infrastructurev1alpha1.FreeboxCluster{}
-				err := clusterProxy.GetClient().Get(ctx, clusterKey, updatedCluster)
-				if err != nil {
-					return false
-				}
-				return updatedCluster.Status.Initialization.Provisioned != nil &&
-					*updatedCluster.Status.Initialization.Provisioned
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(BeTrue())
-
-			By("Creating a FreeboxMachine resource with cluster label")
-			imageURL := "https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-nocloud-arm64-daily.qcow2"
-			machine := &infrastructurev1alpha1.FreeboxMachine{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-vm-for-cluster",
-					Namespace: namespace.Name,
-					Labels: map[string]string{
-						"cluster.x-k8s.io/cluster-name": cluster.Name,
+				Spec: infrastructurev1alpha1.FreeboxClusterSpec{
+					ControlPlaneEndpoint: clusterv1.APIEndpoint{
+						Host: "192.168.1.202",
+						Port: 6443,
 					},
 				},
-				Spec: infrastructurev1alpha1.FreeboxMachineSpec{
-					Name:          "test-vm-for-cluster",
-					ImageURL:      imageURL,
-					VCPUs:         1,
-					MemoryMB:      2048,
-					DiskSizeBytes: 10 * 1024 * 1024 * 1024, // 10GB
-				},
 			}
-			Expect(clusterProxy.GetClient().Create(ctx, machine)).To(Succeed())
+			Expect(clusterProxy.GetClient().Create(ctx, freeboxCluster)).To(Succeed())
 
-			machineKey := GetObjectKey(machine)
+			By("Creating a CAPI Cluster resource")
+			capiCluster = &unstructured.Unstructured{}
+			capiCluster.SetGroupVersionKind(schema.GroupVersionKind{
+				Group:   "cluster.x-k8s.io",
+				Version: "v1beta1",
+				Kind:    "Cluster",
+			})
+			capiCluster.SetName("test-cluster")
+			capiCluster.SetNamespace(namespace.Name)
 
-			By("Verifying the FreeboxMachine can be created alongside the cluster")
+			// Set infrastructure ref
+			infraRef := map[string]interface{}{
+				"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha1",
+				"kind":       "FreeboxCluster",
+				"name":       freeboxCluster.Name,
+			}
+			Expect(unstructured.SetNestedField(capiCluster.Object, infraRef, "spec", "infrastructureRef")).To(Succeed())
+
+			// Set control plane ref
+			controlPlaneRef := map[string]interface{}{
+				"apiVersion": "controlplane.cluster.x-k8s.io/v1beta1",
+				"kind":       "KubeadmControlPlane",
+				"name":       "test-cp",
+			}
+			Expect(unstructured.SetNestedField(capiCluster.Object, controlPlaneRef, "spec", "controlPlaneRef")).To(Succeed())
+
+			Expect(clusterProxy.GetClient().Create(ctx, capiCluster)).To(Succeed())
+
+			By("Verifying FreeboxCluster is provisioned")
 			Eventually(func() bool {
-				updatedMachine := &infrastructurev1alpha1.FreeboxMachine{}
-				err := clusterProxy.GetClient().Get(ctx, machineKey, updatedMachine)
-				return err == nil
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(BeTrue())
+				updatedCluster := &infrastructurev1alpha1.FreeboxCluster{}
+				err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxCluster), updatedCluster)
+				if err != nil {
+					return false
+				}
+				return updatedCluster.Status.Ready &&
+					updatedCluster.Status.Initialization.Provisioned != nil &&
+					*updatedCluster.Status.Initialization.Provisioned
+			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(BeTrue(),
+				"FreeboxCluster should be ready and provisioned")
 
-			By("Deleting the FreeboxMachine")
-			Expect(clusterProxy.GetClient().Delete(ctx, machine)).To(Succeed())
-
-			By("Waiting for the FreeboxMachine to be deleted")
-			Eventually(func() bool {
-				err := clusterProxy.GetClient().Get(ctx, machineKey,
-					&infrastructurev1alpha1.FreeboxMachine{})
-				return err != nil
-			}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(BeTrue())
-
-			By("Deleting the FreeboxCluster")
-			Expect(clusterProxy.GetClient().Delete(ctx, cluster)).To(Succeed())
-
-			By("Waiting for the FreeboxCluster to be deleted")
-			Eventually(func() bool {
-				err := clusterProxy.GetClient().Get(ctx, clusterKey,
-					&infrastructurev1alpha1.FreeboxCluster{})
-				return err != nil
-			}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(BeTrue())
-		})
-	})
-
-	Context("FreeboxMachineTemplate", Label("PR-Blocking"), func() {
-		It("Should have FreeboxMachineTemplate CRD available", func() {
-			By("Listing FreeboxMachineTemplate resources")
-			templateList := &infrastructurev1alpha1.FreeboxMachineTemplateList{}
-			Eventually(func() error {
-				return clusterProxy.GetClient().List(ctx, templateList)
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed())
-		})
-
-		It("Should create and delete a FreeboxMachineTemplate successfully", func() {
-			By("Creating a FreeboxMachineTemplate resource")
-			template := &infrastructurev1alpha1.FreeboxMachineTemplate{
+			By("Creating a FreeboxMachineTemplate for control plane nodes")
+			freeboxMachineTemplate = &infrastructurev1alpha1.FreeboxMachineTemplate{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-template",
+					Name:      "test-cp-template",
 					Namespace: namespace.Name,
 				},
 				Spec: infrastructurev1alpha1.FreeboxMachineTemplateSpec{
 					Template: infrastructurev1alpha1.FreeboxMachineTemplateResource{
 						Spec: infrastructurev1alpha1.FreeboxMachineSpec{
-							Name:          "test-vm-from-template",
+							Name:          "test-vm-cp",
 							VCPUs:         2,
 							MemoryMB:      4096,
-							ImageURL:      "https://factory.talos.dev/image/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba/v1.11.5/nocloud-arm64.raw.xz",
-							DiskSizeBytes: 21474836480, // 20GB
+							ImageURL:      imageURL,
+							DiskSizeBytes: 10737418240, // 10GB
 						},
 					},
 				},
 			}
-			Expect(clusterProxy.GetClient().Create(ctx, template)).To(Succeed())
+			Expect(clusterProxy.GetClient().Create(ctx, freeboxMachineTemplate)).To(Succeed())
 
-			templateKey := GetObjectKey(template)
-
-			By("Verifying the FreeboxMachineTemplate was created")
+			By("Verifying FreeboxMachineTemplate was created")
 			Eventually(func() error {
-				return clusterProxy.GetClient().Get(ctx, templateKey, template)
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed())
+				template := &infrastructurev1alpha1.FreeboxMachineTemplate{}
+				return clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxMachineTemplate), template)
+			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+				"FreeboxMachineTemplate should be created")
 
-			By("Deleting the FreeboxMachineTemplate")
-			Expect(clusterProxy.GetClient().Delete(ctx, template)).To(Succeed())
+			By("Creating a KubeadmControlPlane resource")
+			kubeadmControlPlane = &unstructured.Unstructured{}
+			kubeadmControlPlane.SetGroupVersionKind(schema.GroupVersionKind{
+				Group:   "controlplane.cluster.x-k8s.io",
+				Version: "v1beta1",
+				Kind:    "KubeadmControlPlane",
+			})
+			kubeadmControlPlane.SetName("test-cp")
+			kubeadmControlPlane.SetNamespace(namespace.Name)
 
-			By("Waiting for the FreeboxMachineTemplate to be deleted")
+			// Set KubeadmControlPlane spec
+			Expect(unstructured.SetNestedField(kubeadmControlPlane.Object, int64(1), "spec", "replicas")).To(Succeed())
+			Expect(unstructured.SetNestedField(kubeadmControlPlane.Object, "v1.31.0", "spec", "version")).To(Succeed())
+
+			// Set machine template
+			machineTemplate := map[string]interface{}{
+				"infrastructureRef": map[string]interface{}{
+					"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha1",
+					"kind":       "FreeboxMachineTemplate",
+					"name":       freeboxMachineTemplate.Name,
+				},
+			}
+			Expect(unstructured.SetNestedField(kubeadmControlPlane.Object, machineTemplate, "spec", "machineTemplate")).To(Succeed())
+
+			// Set KubeadmConfigSpec with test markers to verify bootstrap data
+			kubeadmConfigSpec := map[string]interface{}{
+				"files": []interface{}{
+					map[string]interface{}{
+						"path":        "/etc/bootstrap-test-marker",
+						"owner":       "root:root",
+						"permissions": "0644",
+						"content":     "Bootstrap data was successfully passed to the VM!",
+					},
+				},
+				"preKubeadmCommands": []interface{}{
+					"echo 'Bootstrap test completed' > /var/log/bootstrap-test.log",
+					// Install dependencies
+					"apt-get update",
+					"apt-get install -y apt-transport-https ca-certificates curl gpg",
+					// Add Kubernetes apt repository
+					"mkdir -p /etc/apt/keyrings",
+					"curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg",
+					"echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' > /etc/apt/sources.list.d/kubernetes.list",
+					// Install Kubernetes components
+					"apt-get update",
+					"apt-get install -y kubelet kubeadm kubectl containerd",
+					"apt-mark hold kubelet kubeadm kubectl",
+					// Configure containerd
+					"mkdir -p /etc/containerd",
+					"containerd config default > /etc/containerd/config.toml",
+					"sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml",
+					"systemctl restart containerd",
+					"systemctl enable containerd",
+					// Enable kubelet
+					"systemctl enable kubelet",
+				},
+			}
+			Expect(unstructured.SetNestedField(kubeadmControlPlane.Object, kubeadmConfigSpec, "spec", "kubeadmConfigSpec")).To(Succeed())
+
+			Expect(clusterProxy.GetClient().Create(ctx, kubeadmControlPlane)).To(Succeed())
+
+			By("Waiting for KubeadmControlPlane to create a Machine")
+			Eventually(func() error {
+				machineList := &unstructured.UnstructuredList{}
+				machineList.SetGroupVersionKind(schema.GroupVersionKind{
+					Group:   "cluster.x-k8s.io",
+					Version: "v1beta1",
+					Kind:    "MachineList",
+				})
+
+				if err := clusterProxy.GetClient().List(ctx, machineList); err != nil {
+					return fmt.Errorf("failed to list Machines: %w", err)
+				}
+
+				for _, item := range machineList.Items {
+					labels := item.GetLabels()
+					if labels["cluster.x-k8s.io/cluster-name"] == "test-cluster" {
+						createdMachine = &item
+						return nil
+					}
+				}
+				return fmt.Errorf("no Machine found for cluster test-cluster")
+			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+				"KubeadmControlPlane should create a Machine")
+
+			By("Verifying Machine has bootstrap dataSecretName set")
+			Eventually(func() error {
+				// Refresh the machine
+				machineList := &unstructured.UnstructuredList{}
+				machineList.SetGroupVersionKind(schema.GroupVersionKind{
+					Group:   "cluster.x-k8s.io",
+					Version: "v1beta1",
+					Kind:    "MachineList",
+				})
+
+				if err := clusterProxy.GetClient().List(ctx, machineList); err != nil {
+					return fmt.Errorf("failed to list Machines: %w", err)
+				}
+
+				for _, item := range machineList.Items {
+					if item.GetName() == createdMachine.GetName() {
+						secretName, found, err := unstructured.NestedString(item.Object, "spec", "bootstrap", "dataSecretName")
+						if err != nil {
+							return fmt.Errorf("error getting dataSecretName: %w", err)
+						}
+						if !found || secretName == "" {
+							return fmt.Errorf("bootstrap dataSecretName not yet set on Machine")
+						}
+						bootstrapDataSecretName = secretName
+						return nil
+					}
+				}
+				return fmt.Errorf("Machine %s not found", createdMachine.GetName())
+			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+				"Machine should have bootstrap dataSecretName set by CABPK")
+
+			By(fmt.Sprintf("Verifying bootstrap Secret %s was created by CABPK", bootstrapDataSecretName))
+			bootstrapSecret := &corev1.Secret{}
+			Eventually(func() error {
+				return clusterProxy.GetClient().Get(ctx,
+					types.NamespacedName{Name: bootstrapDataSecretName, Namespace: namespace.Name},
+					bootstrapSecret)
+			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+				"Bootstrap Secret should be created by CABPK")
+
+			By("Verifying bootstrap Secret contains cloud-init data with test markers")
+			Expect(bootstrapSecret.Data).To(HaveKey("value"), "Bootstrap Secret should have 'value' key")
+			bootstrapData := string(bootstrapSecret.Data["value"])
+			Expect(bootstrapData).To(ContainSubstring("#cloud-config"), "Bootstrap data should be in cloud-init format")
+			Expect(bootstrapData).To(ContainSubstring("Bootstrap test completed"), "Bootstrap data should contain test marker from KubeadmConfigSpec")
+
+			By("Waiting for FreeboxMachine to be created by infrastructure controller")
+			Eventually(func() error {
+				freeboxMachineList := &infrastructurev1alpha1.FreeboxMachineList{}
+				if err := clusterProxy.GetClient().List(ctx, freeboxMachineList); err != nil {
+					return fmt.Errorf("failed to list FreeboxMachines: %w", err)
+				}
+
+				for i := range freeboxMachineList.Items {
+					machine := &freeboxMachineList.Items[i]
+					owners := machine.GetOwnerReferences()
+					for _, owner := range owners {
+						if owner.Kind == "Machine" && owner.Name == createdMachine.GetName() {
+							freeboxMachine = machine
+							return nil
+						}
+					}
+				}
+				return fmt.Errorf("FreeboxMachine not yet created for Machine %s", createdMachine.GetName())
+			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+				"FreeboxMachine should be created by infrastructure controller")
+
+			By("Verifying FreeboxMachine has VMID set")
+			Eventually(func() error {
+				machine := &infrastructurev1alpha1.FreeboxMachine{}
+				if err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxMachine), machine); err != nil {
+					return fmt.Errorf("failed to get FreeboxMachine: %w", err)
+				}
+
+				vmID = machine.Status.VMID
+				if vmID == nil {
+					return fmt.Errorf("VMID not yet set")
+				}
+				freeboxMachine = machine // Update reference
+				return nil
+			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+				"FreeboxMachine should have VMID set")
+
+			By(fmt.Sprintf("Verifying VM %d was created with cloud-init enabled", *vmID))
+			Eventually(func() error {
+				vm, err := freeboxClient.GetVirtualMachine(ctx, *vmID)
+				if err != nil {
+					return fmt.Errorf("failed to get VM: %w", err)
+				}
+
+				if !vm.EnableCloudInit {
+					return fmt.Errorf("cloud-init is not enabled on the VM")
+				}
+
+				return nil
+			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+				"VM should have cloud-init enabled")
+
+			By("Verifying VM has bootstrap data from CABPK")
+			Eventually(func() error {
+				vm, err := freeboxClient.GetVirtualMachine(ctx, *vmID)
+				if err != nil {
+					return fmt.Errorf("failed to get VM: %w", err)
+				}
+
+				if vm.CloudInitUserData == "" {
+					return fmt.Errorf("CloudInitUserData is empty")
+				}
+
+				if !strings.Contains(vm.CloudInitUserData, "Bootstrap test completed") {
+					return fmt.Errorf("CloudInitUserData does not contain expected test marker from CABPK")
+				}
+
+				return nil
+			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+				"VM should have bootstrap data from CABPK with test markers")
+
+			By("Verifying FreeboxMachine has IP addresses populated")
 			Eventually(func() bool {
-				err := clusterProxy.GetClient().Get(ctx, templateKey,
-					&infrastructurev1alpha1.FreeboxMachineTemplate{})
-				return err != nil
-			}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(BeTrue())
+				machine := &infrastructurev1alpha1.FreeboxMachine{}
+				if err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxMachine), machine); err != nil {
+					return false
+				}
+				return len(machine.Status.Addresses) > 0
+			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(BeTrue(),
+				"FreeboxMachine should have IP addresses")
+
+			By("Cleaning up test resources in correct order")
+			// Delete in reverse order of dependencies
+			if freeboxMachine != nil {
+				Expect(clusterProxy.GetClient().Delete(ctx, freeboxMachine)).To(Succeed())
+				WaitForFreeboxMachineDeleted(ctx, WaitForFreeboxMachineDeletedInput{
+					Getter:  clusterProxy.GetClient(),
+					Machine: freeboxMachine,
+				}, e2eConfig.GetIntervals("default", "wait-delete")...)
+			}
+			if createdMachine != nil {
+				Expect(clusterProxy.GetClient().Delete(ctx, createdMachine)).To(Succeed())
+			}
+			if kubeadmControlPlane != nil {
+				Expect(clusterProxy.GetClient().Delete(ctx, kubeadmControlPlane)).To(Succeed())
+			}
+			if freeboxMachineTemplate != nil {
+				Expect(clusterProxy.GetClient().Delete(ctx, freeboxMachineTemplate)).To(Succeed())
+			}
+			if capiCluster != nil {
+				Expect(clusterProxy.GetClient().Delete(ctx, capiCluster)).To(Succeed())
+			}
+			if freeboxCluster != nil {
+				Expect(clusterProxy.GetClient().Delete(ctx, freeboxCluster)).To(Succeed())
+			}
 		})
 	})
 })

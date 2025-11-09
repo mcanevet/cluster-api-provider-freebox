@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -30,9 +31,9 @@ type FreeboxClusterSpec struct {
 	// The following markers will use OpenAPI v3 schema to validate the value
 	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
 
-	// foo is an example field of FreeboxCluster. Edit freeboxcluster_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// ControlPlaneEndpoint represents the endpoint used to communicate with the control plane.
+	// This is required and must be set by the user to the actual control plane endpoint.
+	ControlPlaneEndpoint clusterv1.APIEndpoint `json:"controlPlaneEndpoint"`
 }
 
 // FreeboxClusterStatus defines the observed state of FreeboxCluster.
@@ -42,6 +43,11 @@ type FreeboxClusterStatus struct {
 
 	// For Kubernetes API conventions, see:
 	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+
+	// Ready is true when the provider resource is ready.
+	// NOTE: This field is part of the Cluster API contract and is required for the Cluster to be considered ready.
+	// +optional
+	Ready bool `json:"ready,omitempty"`
 
 	// initialization provides observations of the FreeboxCluster initialization process.
 	// NOTE: This field is part of the Cluster API contract and is used to orchestrate initial Cluster provisioning.
