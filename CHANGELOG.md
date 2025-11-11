@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.1.0...v0.2.0) (2025-11-11)
+
+
+### Features
+
+* add automated release artifact generation ([8d741f3](https://github.com/mcanevet/cluster-api-provider-freebox/commit/8d741f3f5be2a030e923b462eed82f9e85d398e2))
+
 ## 0.1.0 (2025-11-11)
 
 
