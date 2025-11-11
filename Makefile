@@ -174,21 +174,9 @@ release: manifests kustomize ## Generate release artifacts for clusterctl
 	@echo "  - major: 0" >> config/release/metadata.yaml
 	@echo "    minor: 1" >> config/release/metadata.yaml
 	@echo "    contract: v1beta1" >> config/release/metadata.yaml
-	@echo ""
-	@echo "Release artifacts generated in config/release/"
-	@echo "  - infrastructure-components.yaml ($(shell wc -l < config/release/infrastructure-components.yaml) lines)"
-	@echo "  - metadata.yaml"
-	@echo ""
-	@echo "Next steps:"
-	@echo "  1. Review the artifacts in config/release/"
-	@echo "  2. git add config/release/"
-	@echo "  3. git commit -m 'Release $(VERSION)'"
-	@echo "  4. git tag $(VERSION)"
-	@echo "  5. git push origin main --tags"
-	@echo "  6. Create GitHub release at https://github.com/mcanevet/cluster-api-provider-freebox/releases/new"
-	@echo "     - Tag: $(VERSION)"
-	@echo "     - Upload config/release/infrastructure-components.yaml"
-	@echo "     - Upload config/release/metadata.yaml"
+	@echo "Release artifacts generated:"
+	@echo "  - config/release/infrastructure-components.yaml"
+	@echo "  - config/release/metadata.yaml"
 
 ##@ Dependencies
 

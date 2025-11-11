@@ -31,3 +31,6 @@ go.work
 
 # E2E test artifacts
 _artifacts/
+
+# Release artifacts (generated during CI)
+config/release/
