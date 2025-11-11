@@ -696,6 +696,19 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 			logger.Info("VM created successfully", "vmID", vm.ID, "name", vm.Name)
 
+			// Set providerID in spec to match CAPI contract
+			// Format: freebox://<vm-id>
+			// Only update if not already set to avoid unnecessary API calls
+			if machine.Spec.ProviderID == "" {
+				providerID := fmt.Sprintf("freebox://%d", vm.ID)
+				machine.Spec.ProviderID = providerID
+				if err := r.Update(ctx, &machine); err != nil {
+					logger.Error(err, "Failed to update FreeboxMachine spec with providerID")
+					return ctrl.Result{}, err
+				}
+				logger.Info("Set providerID", "providerID", providerID)
+			}
+
 			// Store VM ID and disk path in status immediately after creation
 			// This ensures we can clean up the VM even if subsequent operations fail
 			machine.Status.VMID = &vm.ID
