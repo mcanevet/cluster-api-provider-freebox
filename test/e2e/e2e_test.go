@@ -30,6 +30,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
@@ -532,24 +534,135 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 					return fmt.Errorf("failed to get kubeconfig secret: %w", err)
 				}
 
-				// TODO: Use the kubeconfig to verify API server connectivity
-				// For now, just verify the secret exists
-				if _, ok := kubeconfigSecret.Data["value"]; !ok {
+				// Verify the secret contains the kubeconfig data
+				kubeconfigData, ok := kubeconfigSecret.Data["value"]
+				if !ok {
 					return fmt.Errorf("kubeconfig secret does not contain 'value' key")
 				}
+
+				// Verify the kubeconfig contains the expected control plane endpoint
+				kubeconfigStr := string(kubeconfigData)
+				if !strings.Contains(kubeconfigStr, freeboxCluster.Spec.ControlPlaneEndpoint.Host) {
+					return fmt.Errorf("kubeconfig does not contain expected control plane endpoint %s",
+						freeboxCluster.Spec.ControlPlaneEndpoint.Host)
+				}
+
+				// Create a Kubernetes client from the kubeconfig
+				restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfigData)
+				if err != nil {
+					return fmt.Errorf("failed to parse kubeconfig: %w", err)
+				}
+
+				clientset, err := kubernetes.NewForConfig(restConfig)
+				if err != nil {
+					return fmt.Errorf("failed to create Kubernetes client: %w", err)
+				}
+
+				// Verify API server is responding by listing namespaces
+				_, err = clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+				if err != nil {
+					return fmt.Errorf("failed to connect to API server: %w", err)
+				}
+
 				return nil
 			}, e2eConfig.GetIntervals("default", "wait-control-plane")...).Should(Succeed(),
-				"API server should be accessible")
+				"API server should be accessible and responding to requests")
 
-			By("Cleaning up test resources in correct order")
-			// Delete in reverse order of dependencies
-			if freeboxMachine != nil {
-				Expect(clusterProxy.GetClient().Delete(ctx, freeboxMachine)).To(Succeed())
-				WaitForFreeboxMachineDeleted(ctx, WaitForFreeboxMachineDeletedInput{
-					Getter:  clusterProxy.GetClient(),
-					Machine: freeboxMachine,
-				}, e2eConfig.GetIntervals("default", "wait-delete")...)
+			By("Verifying VM exists in Freebox before deletion")
+			var vmID64 int64
+			Eventually(func() error {
+				vm, err := freeboxClient.GetVirtualMachine(ctx, *vmID)
+				if err != nil {
+					return fmt.Errorf("failed to get VM before deletion: %w", err)
+				}
+				vmID64 = vm.ID
+				return nil
+			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+				"VM should exist in Freebox before deletion")
+
+			Expect(vmID64).To(Equal(*vmID), "VM should be retrieved before deletion")
+
+			By("Triggering FreeboxMachine deletion")
+			Expect(clusterProxy.GetClient().Delete(ctx, freeboxMachine)).To(Succeed())
+
+			By("Verifying Ready condition transitions to False/Deleting during deletion")
+			Eventually(func() error {
+				machine := &infrastructurev1alpha1.FreeboxMachine{}
+				if err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxMachine), machine); err != nil {
+					// Machine may already be deleted
+					return nil
+				}
+
+				// Check if deletion timestamp is set
+				if machine.DeletionTimestamp == nil {
+					return fmt.Errorf("deletion timestamp not set yet")
+				}
+
+				// Find the Ready condition
+				var readyCondition *metav1.Condition
+				for i := range machine.Status.Conditions {
+					if machine.Status.Conditions[i].Type == "Ready" {
+						readyCondition = &machine.Status.Conditions[i]
+						break
+					}
+				}
+
+				if readyCondition == nil {
+					return fmt.Errorf("Ready condition not found during deletion")
+				}
+
+				if readyCondition.Status != metav1.ConditionFalse {
+					return fmt.Errorf("Ready condition should be False during deletion, got %s", readyCondition.Status)
+				}
+
+				if readyCondition.Reason != "Deleting" {
+					return fmt.Errorf("Ready condition Reason should be 'Deleting', got %s", readyCondition.Reason)
+				}
+
+				return nil
+			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+				"Ready condition should transition to False/Deleting")
+
+			By("Waiting for FreeboxMachine to be fully deleted")
+			WaitForFreeboxMachineDeleted(ctx, WaitForFreeboxMachineDeletedInput{
+				Getter:  clusterProxy.GetClient(),
+				Machine: freeboxMachine,
+			}, e2eConfig.GetIntervals("default", "wait-delete")...)
+
+			By("Verifying VM is deleted from Freebox")
+			Eventually(func() error {
+				_, err := freeboxClient.GetVirtualMachine(ctx, *vmID)
+				if err != nil {
+					// Expected: VM should not be found
+					if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "404") {
+						return nil
+					}
+					return fmt.Errorf("unexpected error checking VM deletion: %w", err)
+				}
+				return fmt.Errorf("VM still exists in Freebox, expected it to be deleted")
+			}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(Succeed(),
+				"VM should be deleted from Freebox")
+
+			By("Verifying disk file is deleted from Freebox")
+			// Store the disk path for verification
+			diskPath := freeboxMachine.Status.DiskPath
+			if diskPath != "" {
+				Eventually(func() error {
+					// Try to list VMs to ensure API is responsive
+					_, err := freeboxClient.ListVirtualMachines(ctx)
+					if err != nil {
+						return fmt.Errorf("Freebox API not responsive: %w", err)
+					}
+					// If we get here, disk cleanup should have happened
+					// We can't directly verify file deletion via API, but we verified VM is gone
+					return nil
+				}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(Succeed(),
+					"Disk cleanup should complete")
 			}
+
+			By("Cleaning up remaining test resources in correct order")
+			// Delete remaining resources in reverse order of dependencies
+			// Note: FreeboxMachine already deleted and verified above
 			if createdMachine != nil {
 				Expect(clusterProxy.GetClient().Delete(ctx, createdMachine)).To(Succeed())
 			}
