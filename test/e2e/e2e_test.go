@@ -22,7 +22,6 @@ package e2e
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -196,17 +195,6 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 						},
 					},
 				},
-				// Add debug user for troubleshooting
-				"users": []interface{}{
-					map[string]interface{}{
-						"name":  "debug",
-						"sudo":  "ALL=(ALL) NOPASSWD:ALL",
-						"shell": "/bin/bash",
-						"sshAuthorizedKeys": []interface{}{
-							"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL8xu4/dL0Oz2RgIwu7egeQiZFefcyTKttBfMM/7imoD",
-						},
-					},
-				},
 				"files": []interface{}{
 					map[string]interface{}{
 						"path":        "/etc/bootstrap-test-marker",
@@ -244,6 +232,11 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 					"systemctl enable containerd",
 					// Enable kubelet
 					"systemctl enable kubelet",
+				},
+				"postKubeadmCommands": []interface{}{
+					// Install Calico CNI
+					"export KUBECONFIG=/etc/kubernetes/admin.conf",
+					"kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.1/manifests/calico.yaml",
 				},
 			}
 			Expect(unstructured.SetNestedField(kubeadmControlPlane.Object, kubeadmConfigSpec, "spec", "kubeadmConfigSpec")).To(Succeed())
@@ -392,26 +385,58 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				"VM should have bootstrap data from CABPK with test markers")
 
 			By("Verifying FreeboxMachine has IP addresses populated")
-			var vmIPAddress string
 			Eventually(func() bool {
 				machine := &infrastructurev1alpha1.FreeboxMachine{}
 				if err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxMachine), machine); err != nil {
 					return false
 				}
-				if len(machine.Status.Addresses) > 0 {
-					vmIPAddress = machine.Status.Addresses[0].Address
-					return true
-				}
-				return false
+				return len(machine.Status.Addresses) > 0
 			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(BeTrue(),
 				"FreeboxMachine should have IP addresses")
 
-			By(fmt.Sprintf("VM is ready for debugging - IP: %s, User: debug (SSH key auth)", vmIPAddress))
-			By("Waiting 5 minutes for manual debugging - you can SSH to the VM to check cloud-init logs")
-			By("SSH command: ssh debug@" + vmIPAddress)
-			By("Check cloud-init logs: sudo tail -f /var/log/cloud-init-output.log")
-			By("Check bootstrap marker: cat /etc/bootstrap-test-marker")
-			time.Sleep(5 * time.Minute)
+			By("Waiting for CAPI Cluster to be ready")
+			Eventually(func() bool {
+				cluster := &unstructured.Unstructured{}
+				cluster.SetGroupVersionKind(schema.GroupVersionKind{
+					Group:   "cluster.x-k8s.io",
+					Version: "v1beta1",
+					Kind:    "Cluster",
+				})
+				if err := clusterProxy.GetClient().Get(ctx, types.NamespacedName{
+					Name:      "test-cluster",
+					Namespace: namespace.Name,
+				}, cluster); err != nil {
+					return false
+				}
+
+				// Check if cluster is ready via status.phase
+				phase, found, err := unstructured.NestedString(cluster.Object, "status", "phase")
+				if err != nil || !found {
+					return false
+				}
+				return phase == "Provisioned"
+			}, e2eConfig.GetIntervals("default", "wait-cluster")...).Should(BeTrue(),
+				"Cluster should become ready")
+
+			By("Verifying API server is accessible on control plane endpoint")
+			Eventually(func() error {
+				// Get the kubeconfig secret
+				kubeconfigSecret := &corev1.Secret{}
+				if err := clusterProxy.GetClient().Get(ctx, types.NamespacedName{
+					Name:      "test-cluster-kubeconfig",
+					Namespace: namespace.Name,
+				}, kubeconfigSecret); err != nil {
+					return fmt.Errorf("failed to get kubeconfig secret: %w", err)
+				}
+
+				// TODO: Use the kubeconfig to verify API server connectivity
+				// For now, just verify the secret exists
+				if _, ok := kubeconfigSecret.Data["value"]; !ok {
+					return fmt.Errorf("kubeconfig secret does not contain 'value' key")
+				}
+				return nil
+			}, e2eConfig.GetIntervals("default", "wait-control-plane")...).Should(Succeed(),
+				"API server should be accessible")
 
 			By("Cleaning up test resources in correct order")
 			// Delete in reverse order of dependencies
