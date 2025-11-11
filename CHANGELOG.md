@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.2.0...v0.2.1) (2025-11-11)
+
+
+### Bug Fixes
+
+* split release workflows and require PAT for tag triggers ([619a3c3](https://github.com/mcanevet/cluster-api-provider-freebox/commit/619a3c3fc33138d3da6baf06b3fb20a452351c17))
+
 ## [0.2.0](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.1.0...v0.2.0) (2025-11-11)
 
 
