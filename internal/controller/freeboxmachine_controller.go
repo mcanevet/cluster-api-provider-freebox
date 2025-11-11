@@ -52,6 +52,10 @@ const (
 	ConditionImageReady = "ImageReady"
 
 	FreeboxMachineFinalizer = "freeboxmachine.infrastructure.cluster.x-k8s.io/finalizer"
+
+	// Task states
+	taskStateDone  = "done"
+	taskStateError = "error"
 )
 
 // FreeboxMachineReconciler reconciles a FreeboxMachine object
@@ -78,6 +82,8 @@ type FreeboxMachineReconciler struct {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
+//
+//nolint:gocyclo // TODO: Refactor into smaller helper functions
 func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
 
@@ -88,7 +94,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// --- Handle deletion ---
-	if !machine.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !machine.DeletionTimestamp.IsZero() {
 		if containsString(machine.Finalizers, FreeboxMachineFinalizer) {
 			logger.Info("Deleting VM because FreeboxMachine is being deleted")
 
@@ -202,7 +208,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	var taskID int64
 
 	if phaseCond != nil {
-		fmt.Sscanf(phaseCond.Message, "phase=%s task_id=%d", &phase, &taskID)
+		_, _ = fmt.Sscanf(phaseCond.Message, "phase=%s task_id=%d", &phase, &taskID)
 	}
 
 	// -----------------------
@@ -301,7 +307,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// 3. Extraction phase
 	// -----------------------
 	if phase == "extract" {
-		fmt.Sscanf(phaseCond.Message, "phase=extract task_id=%d", &taskID)
+		_, _ = fmt.Sscanf(phaseCond.Message, "phase=extract task_id=%d", &taskID)
 
 		if taskID == 0 {
 			fsPayload := freeboxTypes.ExtractFilePayload{
@@ -332,7 +338,8 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
-		if fsTask.State == "done" {
+		switch fsTask.State {
+		case taskStateDone:
 			logger.Info("Extraction completed", "taskID", taskID)
 
 			// After extraction, file has the underlying name (without compression suffix)
@@ -358,7 +365,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			})
 			_ = r.Status().Update(ctx, &machine)
 			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
-		} else if fsTask.State == "error" {
+		case taskStateError:
 			logger.Error(fmt.Errorf("extraction failed"), "Extraction failed")
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    ReadyCondition,
@@ -374,6 +381,9 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			})
 			_ = r.Status().Update(ctx, &machine)
 			return ctrl.Result{}, fmt.Errorf("extraction failed")
+		default:
+			// Still in progress
+			logger.Info("Extraction in progress", "taskID", taskID, "state", fsTask.State)
 		}
 
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
@@ -383,7 +393,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// 4. Copy phase (for non-compressed images)
 	// -----------------------
 	if phase == "copy" {
-		fmt.Sscanf(phaseCond.Message, "phase=copy task_id=%d", &taskID)
+		_, _ = fmt.Sscanf(phaseCond.Message, "phase=copy task_id=%d", &taskID)
 
 		if taskID == 0 {
 			// Copy file from download dir to VM storage directory
@@ -412,7 +422,8 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
-		if fsTask.State == "done" {
+		switch fsTask.State {
+		case taskStateDone:
 			logger.Info("Copy completed", "taskID", taskID)
 
 			// After copy completes, we need to rename from source filename to VM name
@@ -439,7 +450,8 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			})
 			_ = r.Status().Update(ctx, &machine)
 			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
-		} else if fsTask.State == "error" {
+
+		case taskStateError:
 			logger.Error(fmt.Errorf("copy failed"), "Copy failed")
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    ReadyCondition,
@@ -455,9 +467,11 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			})
 			_ = r.Status().Update(ctx, &machine)
 			return ctrl.Result{}, fmt.Errorf("copy failed")
-		}
 
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		default:
+			logger.Info("Copy in progress", "taskID", taskID, "state", fsTask.State)
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
 	}
 
 	// -----------------------
@@ -470,7 +484,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		re := regexp.MustCompile(`task_id=(\d+) src=(.+) dst=(.+)`)
 		matches := re.FindStringSubmatch(phaseCond.Message)
 		if len(matches) == 4 {
-			fmt.Sscanf(matches[1], "%d", &taskID)
+			_, _ = fmt.Sscanf(matches[1], "%d", &taskID)
 			srcPath = matches[2]
 			dstPath = matches[3]
 		}
@@ -500,7 +514,8 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
-		if fsTask.State == "done" {
+		switch fsTask.State {
+		case taskStateDone:
 			logger.Info("Rename completed", "taskID", taskID)
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImagePhase",
@@ -510,7 +525,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			})
 			_ = r.Status().Update(ctx, &machine)
 			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
-		} else if fsTask.State == "error" {
+		case taskStateError:
 			logger.Error(fmt.Errorf("rename failed"), "Rename failed", "error", fsTask.Error)
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    ReadyCondition,
@@ -526,6 +541,9 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			})
 			_ = r.Status().Update(ctx, &machine)
 			return ctrl.Result{}, fmt.Errorf("rename failed: %s", fsTask.Error)
+		default:
+			// Still in progress
+			logger.Info("Rename in progress", "taskID", taskID, "state", fsTask.State)
 		}
 
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
@@ -535,7 +553,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// 6. Resize disk
 	// -----------------------
 	if phase == "resize" {
-		fmt.Sscanf(phaseCond.Message, "phase=resize task_id=%d", &taskID)
+		_, _ = fmt.Sscanf(phaseCond.Message, "phase=resize task_id=%d", &taskID)
 
 		if taskID == 0 {
 			resizePayload := freeboxTypes.VirtualDisksResizePayload{
@@ -634,7 +652,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				for _, host := range lanHosts {
 					hostMacLower := strings.ToLower(host.L2Ident.ID)
 					if hostMacLower == vmMacLower {
-						foundHost = true
 						// Extract IPv4 addresses from L3Connectivities
 						var addresses []clusterv1.MachineAddress
 						for _, l3 := range host.L3Connectivities {

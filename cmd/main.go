@@ -334,7 +334,9 @@ func getFreeboxDownloadDir(endpoint, version, sessionToken string) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("failed to make request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
@@ -399,7 +401,9 @@ func getVMStoragePath(endpoint, version, sessionToken string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to make request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
@@ -456,7 +460,9 @@ func getFreeboxSessionToken(endpoint, version, appID, privateToken string) (stri
 	if err != nil {
 		return "", fmt.Errorf("failed to get login challenge: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -478,7 +484,11 @@ func getFreeboxSessionToken(endpoint, version, appID, privateToken string) (stri
 
 	if !challengeResult.Success {
 		if challengeResult.ErrorCode != "" || challengeResult.Msg != "" {
-			return "", fmt.Errorf("challenge request failed: error_code=%s, msg=%s", challengeResult.ErrorCode, challengeResult.Msg)
+			return "", fmt.Errorf(
+				"challenge request failed: error_code=%s, msg=%s",
+				challengeResult.ErrorCode,
+				challengeResult.Msg,
+			)
 		}
 		return "", fmt.Errorf("challenge request was not successful")
 	}
@@ -497,7 +507,9 @@ func getFreeboxSessionToken(endpoint, version, appID, privateToken string) (stri
 	if err != nil {
 		return "", fmt.Errorf("failed to open session: %w", err)
 	}
-	defer sessionResp.Body.Close()
+	defer func() {
+		_ = sessionResp.Body.Close()
+	}()
 
 	sessionBody, err := io.ReadAll(sessionResp.Body)
 	if err != nil {
