@@ -1,5 +1,8 @@
+# Version
+VERSION ?= v0.1.0
+
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= ghcr.io/mcanevet/cluster-api-provider-freebox:$(VERSION)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -156,6 +159,36 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+
+##@ Release
+
+.PHONY: release
+release: manifests kustomize ## Generate release artifacts for clusterctl
+	@echo "Generating release artifacts for $(VERSION)"
+	@mkdir -p config/release
+	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	$(KUSTOMIZE) build config/default > config/release/infrastructure-components.yaml
+	@echo "apiVersion: clusterctl.cluster.x-k8s.io/v1alpha3" > config/release/metadata.yaml
+	@echo "kind: Metadata" >> config/release/metadata.yaml
+	@echo "releaseSeries:" >> config/release/metadata.yaml
+	@echo "  - major: 0" >> config/release/metadata.yaml
+	@echo "    minor: 1" >> config/release/metadata.yaml
+	@echo "    contract: v1beta1" >> config/release/metadata.yaml
+	@echo ""
+	@echo "Release artifacts generated in config/release/"
+	@echo "  - infrastructure-components.yaml ($(shell wc -l < config/release/infrastructure-components.yaml) lines)"
+	@echo "  - metadata.yaml"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Review the artifacts in config/release/"
+	@echo "  2. git add config/release/"
+	@echo "  3. git commit -m 'Release $(VERSION)'"
+	@echo "  4. git tag $(VERSION)"
+	@echo "  5. git push origin main --tags"
+	@echo "  6. Create GitHub release at https://github.com/mcanevet/cluster-api-provider-freebox/releases/new"
+	@echo "     - Tag: $(VERSION)"
+	@echo "     - Upload config/release/infrastructure-components.yaml"
+	@echo "     - Upload config/release/metadata.yaml"
 
 ##@ Dependencies
 
