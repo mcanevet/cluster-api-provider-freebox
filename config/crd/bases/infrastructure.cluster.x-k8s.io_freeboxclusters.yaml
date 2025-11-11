@@ -159,11 +159,6 @@ spec:
                       NOTE: this field is part of the Cluster API contract, and it is used to orchestrate initial Cluster provisioning.
                     type: boolean
                 type: object
-              ready:
-                description: |-
-                  Ready is true when the provider resource is ready.
-                  NOTE: This field is part of the Cluster API contract and is required for the Cluster to be considered ready.
-                type: boolean
             type: object
         required:
         - spec
