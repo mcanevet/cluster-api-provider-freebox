@@ -83,10 +83,9 @@ func (r *FreeboxClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		logger.Info("Updated Cluster with ControlPlaneEndpoint", "host", cluster.Spec.ControlPlaneEndpoint.Host, "port", cluster.Spec.ControlPlaneEndpoint.Port)
 	}
 
-	// Set initialization.provisioned and ready to true
-	if freeboxCluster.Status.Initialization.Provisioned == nil || !*freeboxCluster.Status.Initialization.Provisioned || !freeboxCluster.Status.Ready {
+	// Set initialization.provisioned to true
+	if freeboxCluster.Status.Initialization.Provisioned == nil || !*freeboxCluster.Status.Initialization.Provisioned {
 		freeboxCluster.Status.Initialization.Provisioned = ptr.To(true)
-		freeboxCluster.Status.Ready = true
 
 		// Set Ready condition to True
 		meta.SetStatusCondition(&freeboxCluster.Status.Conditions, metav1.Condition{

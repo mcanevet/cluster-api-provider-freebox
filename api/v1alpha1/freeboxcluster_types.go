@@ -44,11 +44,6 @@ type FreeboxClusterStatus struct {
 	// For Kubernetes API conventions, see:
 	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
 
-	// Ready is true when the provider resource is ready.
-	// NOTE: This field is part of the Cluster API contract and is required for the Cluster to be considered ready.
-	// +optional
-	Ready bool `json:"ready,omitempty"`
-
 	// initialization provides observations of the FreeboxCluster initialization process.
 	// NOTE: This field is part of the Cluster API contract and is used to orchestrate initial Cluster provisioning.
 	// +optional

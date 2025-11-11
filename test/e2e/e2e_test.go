@@ -128,11 +128,10 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				if err != nil {
 					return false
 				}
-				return updatedCluster.Status.Ready &&
-					updatedCluster.Status.Initialization.Provisioned != nil &&
+				return updatedCluster.Status.Initialization.Provisioned != nil &&
 					*updatedCluster.Status.Initialization.Provisioned
 			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(BeTrue(),
-				"FreeboxCluster should be ready and provisioned")
+				"FreeboxCluster should be provisioned")
 
 			By("Creating a FreeboxMachineTemplate for control plane nodes")
 			freeboxMachineTemplate = &infrastructurev1alpha1.FreeboxMachineTemplate{
