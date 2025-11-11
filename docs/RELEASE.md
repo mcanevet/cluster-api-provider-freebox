@@ -2,6 +2,29 @@
 
 This project uses [Release Please](https://github.com/googleapis/release-please) to automate releases based on [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Prerequisites
+
+**Important**: You must create a Personal Access Token (PAT) for Release Please to trigger the build workflow.
+
+### Creating the PAT
+
+1. Go to GitHub Settings → Developer settings → Personal access tokens → Fine-grained tokens
+2. Click "Generate new token"
+3. Configure:
+   - **Repository access**: Only select repositories → `cluster-api-provider-freebox`
+   - **Permissions**:
+     - Contents: Read and write
+     - Issues: Read and write
+     - Pull requests: Read and write
+4. Generate token and copy it
+5. Add as repository secret:
+   - Go to repository Settings → Secrets and variables → Actions
+   - Click "New repository secret"
+   - Name: `RELEASE_PLEASE_TOKEN`
+   - Paste the token value
+
+**Why is this needed?** The default `GITHUB_TOKEN` doesn't trigger workflows when creating tags (to prevent recursive workflows). A PAT allows the tag created by Release Please to trigger the `release.yaml` workflow.
+
 ## How It Works
 
 1. **Commit with conventional commit messages** to `main`:
