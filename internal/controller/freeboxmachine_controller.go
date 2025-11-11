@@ -43,9 +43,13 @@ import (
 )
 
 const (
-	ConditionImageReady    = "ImageReady"
-	ConditionVMProvisioned = "VMProvisioned"
-	ConditionReady         = "Ready"
+	// ReadyCondition is the main condition type that CAPI watches
+	// It reflects the overall state of the FreeboxMachine infrastructure
+	ReadyCondition = "Ready"
+
+	// ConditionImageReady is a supplementary condition that tracks
+	// whether the disk image has been downloaded, extracted, and prepared
+	ConditionImageReady = "ImageReady"
 
 	FreeboxMachineFinalizer = "freeboxmachine.infrastructure.cluster.x-k8s.io/finalizer"
 )
@@ -87,6 +91,15 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if !machine.ObjectMeta.DeletionTimestamp.IsZero() {
 		if containsString(machine.Finalizers, FreeboxMachineFinalizer) {
 			logger.Info("Deleting VM because FreeboxMachine is being deleted")
+
+			// Set Ready condition to False during deletion
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    ReadyCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  "Deleting",
+				Message: "Deleting infrastructure resources",
+			})
+			_ = r.Status().Update(ctx, &machine)
 
 			vmID := machine.Status.VMID
 			if vmID != nil {
@@ -210,6 +223,13 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
+		// Set Ready condition to False - provisioning has started
+		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+			Type:    ReadyCondition,
+			Status:  metav1.ConditionFalse,
+			Reason:  "Provisioning",
+			Message: "Downloading and preparing disk image",
+		})
 		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 			Type:    "ImagePhase",
 			Status:  metav1.ConditionFalse,
@@ -257,6 +277,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 		case freeboxTypes.DownloadTaskStatusError:
 			logger.Error(fmt.Errorf("download failed"), "Download failed")
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    ReadyCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  "ProvisioningFailed",
+				Message: "Image download failed",
+			})
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImagePhase",
 				Status:  metav1.ConditionFalse,
@@ -335,6 +361,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		} else if fsTask.State == "error" {
 			logger.Error(fmt.Errorf("extraction failed"), "Extraction failed")
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    ReadyCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  "ProvisioningFailed",
+				Message: "Image extraction failed",
+			})
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImagePhase",
 				Status:  metav1.ConditionFalse,
 				Reason:  "ExtractionFailed",
@@ -410,6 +442,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		} else if fsTask.State == "error" {
 			logger.Error(fmt.Errorf("copy failed"), "Copy failed")
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    ReadyCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  "ProvisioningFailed",
+				Message: "Image copy failed",
+			})
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImagePhase",
 				Status:  metav1.ConditionFalse,
 				Reason:  "CopyFailed",
@@ -474,6 +512,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 		} else if fsTask.State == "error" {
 			logger.Error(fmt.Errorf("rename failed"), "Rename failed", "error", fsTask.Error)
+			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+				Type:    ReadyCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  "ProvisioningFailed",
+				Message: fmt.Sprintf("Image rename failed: %s", fsTask.Error),
+			})
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImagePhase",
 				Status:  metav1.ConditionFalse,
@@ -604,6 +648,16 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						if len(addresses) > 0 {
 							machine.Status.Addresses = addresses
 							logger.Info("Found IP address for existing VM", "vmID", *machine.Status.VMID, "mac", vm.Mac, "addresses", addresses)
+
+							// Set initialization.provisioned and Ready condition
+							machine.Status.Initialization.Provisioned = ptr.To(true)
+							meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+								Type:    ReadyCondition,
+								Status:  metav1.ConditionTrue,
+								Reason:  "InfrastructureReady",
+								Message: "Freebox machine infrastructure is fully provisioned",
+							})
+
 							if err := r.Status().Update(ctx, &machine); err != nil {
 								logger.Error(err, "Failed to update FreeboxMachine status with addresses")
 								return ctrl.Result{}, err
@@ -780,18 +834,14 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			// Set initialization.provisioned to true - this signals to CAPI that the machine is ready
 			machine.Status.Initialization.Provisioned = ptr.To(true)
 
+			// Set the Ready condition to True - this is the main condition CAPI watches
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    ConditionReady,
-				Status:  metav1.ConditionTrue,
-				Reason:  "VMCreated",
-				Message: "VM created successfully",
-			})
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    ConditionReady,
+				Type:    ReadyCondition,
 				Status:  metav1.ConditionTrue,
 				Reason:  "InfrastructureReady",
-				Message: "Freebox machine infrastructure is ready",
+				Message: "Freebox machine infrastructure is fully provisioned",
 			})
+			// Set supplementary ImagePhase condition to mark completion
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    "ImagePhase",
 				Status:  metav1.ConditionTrue,

@@ -334,6 +334,39 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
 				"FreeboxMachine should be created by infrastructure controller")
 
+			By("Verifying Ready condition is False with Reason=Provisioning during image preparation")
+			Eventually(func() error {
+				machine := &infrastructurev1alpha1.FreeboxMachine{}
+				if err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxMachine), machine); err != nil {
+					return fmt.Errorf("failed to get FreeboxMachine: %w", err)
+				}
+
+				// Find the Ready condition
+				var readyCondition *metav1.Condition
+				for i := range machine.Status.Conditions {
+					if machine.Status.Conditions[i].Type == "Ready" {
+						readyCondition = &machine.Status.Conditions[i]
+						break
+					}
+				}
+
+				if readyCondition == nil {
+					return fmt.Errorf("Ready condition not found")
+				}
+
+				if readyCondition.Status != metav1.ConditionFalse {
+					return fmt.Errorf("Ready condition should be False during provisioning, got %s", readyCondition.Status)
+				}
+
+				if readyCondition.Reason != "Provisioning" {
+					return fmt.Errorf("Ready condition Reason should be 'Provisioning', got %s", readyCondition.Reason)
+				}
+
+				freeboxMachine = machine // Update reference
+				return nil
+			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+				"Ready condition should be False with Reason=Provisioning during image preparation")
+
 			By("Verifying FreeboxMachine has VMID set")
 			Eventually(func() error {
 				machine := &infrastructurev1alpha1.FreeboxMachine{}
@@ -393,6 +426,77 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				return len(machine.Status.Addresses) > 0
 			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(BeTrue(),
 				"FreeboxMachine should have IP addresses")
+
+			By("Verifying Ready condition becomes True with Reason=InfrastructureReady when fully provisioned")
+			Eventually(func() error {
+				machine := &infrastructurev1alpha1.FreeboxMachine{}
+				if err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxMachine), machine); err != nil {
+					return fmt.Errorf("failed to get FreeboxMachine: %w", err)
+				}
+
+				// Find the Ready condition
+				var readyCondition *metav1.Condition
+				for i := range machine.Status.Conditions {
+					if machine.Status.Conditions[i].Type == "Ready" {
+						readyCondition = &machine.Status.Conditions[i]
+						break
+					}
+				}
+
+				if readyCondition == nil {
+					return fmt.Errorf("Ready condition not found")
+				}
+
+				if readyCondition.Status != metav1.ConditionTrue {
+					return fmt.Errorf("Ready condition should be True when provisioned, got %s (Reason: %s, Message: %s)",
+						readyCondition.Status, readyCondition.Reason, readyCondition.Message)
+				}
+
+				if readyCondition.Reason != "InfrastructureReady" {
+					return fmt.Errorf("Ready condition Reason should be 'InfrastructureReady', got %s", readyCondition.Reason)
+				}
+
+				return nil
+			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+				"Ready condition should become True with Reason=InfrastructureReady")
+
+			By("Verifying initialization.provisioned is set to true")
+			Eventually(func() error {
+				machine := &infrastructurev1alpha1.FreeboxMachine{}
+				if err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxMachine), machine); err != nil {
+					return fmt.Errorf("failed to get FreeboxMachine: %w", err)
+				}
+
+				if machine.Status.Initialization.Provisioned == nil {
+					return fmt.Errorf("initialization.provisioned is nil")
+				}
+
+				if !*machine.Status.Initialization.Provisioned {
+					return fmt.Errorf("initialization.provisioned should be true")
+				}
+
+				return nil
+			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+				"initialization.provisioned should be true")
+
+			By("Verifying providerID is set in format 'freebox://<vm-id>'")
+			Eventually(func() error {
+				machine := &infrastructurev1alpha1.FreeboxMachine{}
+				if err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxMachine), machine); err != nil {
+					return fmt.Errorf("failed to get FreeboxMachine: %w", err)
+				}
+
+				if machine.Spec.ProviderID == "" {
+					return fmt.Errorf("providerID is empty")
+				}
+
+				if !strings.HasPrefix(machine.Spec.ProviderID, "freebox://") {
+					return fmt.Errorf("providerID should start with 'freebox://', got %s", machine.Spec.ProviderID)
+				}
+
+				return nil
+			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+				"providerID should be set in format 'freebox://<vm-id>'")
 
 			By("Waiting for CAPI Cluster to be ready")
 			Eventually(func() bool {
