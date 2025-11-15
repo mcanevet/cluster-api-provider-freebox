@@ -172,6 +172,9 @@ release: manifests kustomize ## Generate release artifacts for clusterctl
 	@echo "kind: Metadata" >> config/release/metadata.yaml
 	@echo "releaseSeries:" >> config/release/metadata.yaml
 	@echo "  - major: 0" >> config/release/metadata.yaml
+	@echo "    minor: 2" >> config/release/metadata.yaml
+	@echo "    contract: v1beta1" >> config/release/metadata.yaml
+	@echo "  - major: 0" >> config/release/metadata.yaml
 	@echo "    minor: 1" >> config/release/metadata.yaml
 	@echo "    contract: v1beta1" >> config/release/metadata.yaml
 	@echo "Release artifacts generated:"
