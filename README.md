@@ -66,6 +66,33 @@ make uninstall
 make undeploy
 ```
 
+### Installing with clusterctl
+
+You can install the Freebox infrastructure provider using [clusterctl](https://cluster-api.sigs.k8s.io/clusterctl/overview.html):
+
+1. Create a provider configuration file at `~/.cluster-api/clusterctl.yaml`:
+
+   ```yaml
+   providers:
+     - name: "freebox"
+       url: "https://github.com/mcanevet/cluster-api-provider-freebox/releases/latest/infrastructure-components.yaml"
+       type: "InfrastructureProvider"
+   ```
+
+2. Initialize Cluster API with the Freebox provider (and your chosen bootstrap/control plane providers):
+
+   ```sh
+   clusterctl init -b talos -c talos -i freebox
+   ```
+
+   Replace `talos` with your preferred bootstrap/control plane provider if needed.
+
+3. Wait for all providers to be installed and ready.
+
+4. You can now create clusters using the Freebox provider. See `talos-example/cluster.yaml` for an example manifest.
+
+**Note:** If you encounter errors about provider release series, ensure you are using a recent release and that the metadata.yaml includes the correct release series for your version.
+
 ## Project Distribution
 
 Following the options to release and provide this solution to the users.
