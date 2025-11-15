@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.2.1...v0.3.0) (2025-11-15)
+
+
+### Features
+
+* add support for 0.2 release series in metadata ([8c2f39a](https://github.com/mcanevet/cluster-api-provider-freebox/commit/8c2f39ab83a9331961ad7f667454ae334717b992))
+* add support for 0.3 release series in metadata ([8ad9c1d](https://github.com/mcanevet/cluster-api-provider-freebox/commit/8ad9c1d38d549e1549dbac77285b4f37416a2a78))
+
 ## [0.2.1](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.2.0...v0.2.1) (2025-11-11)
 
 
