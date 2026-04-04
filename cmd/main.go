@@ -249,24 +249,6 @@ func main() {
 	}
 	setupLog.Info("Using VM storage path from /system/ user_main_storage", "path", vmStoragePath)
 
-	// // TODO: remove this
-	// ctx := context.Background()
-
-	// vms, err := client.ListVirtualMachines(ctx)
-	// if err != nil {
-	// 	setupLog.Error(err, "Can not list VMs")
-	// 	os.Exit(1)
-	// }
-
-	// if len(vms) == 0 {
-	// 	setupLog.Info("No VMs found")
-	// } else {
-	// 	for _, vm := range vms {
-	// 		setupLog.Info("VM found", "ID", vm.ID, "Name", vm.Name, "Status", vm.Status)
-	// 	}
-	// }
-	// // END TODO
-
 	if err := (&controller.FreeboxClusterReconciler{
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
