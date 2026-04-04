@@ -684,7 +684,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				logger.Info("Searching for VM in LAN browser", "vmID", *machine.Status.VMID, "vmMac", vm.Mac, "totalHosts", len(lanHosts))
 
 				// Find the host with matching MAC address (case-insensitive comparison)
-				foundHost := false
 				vmMacLower := strings.ToLower(vm.Mac)
 				for _, host := range lanHosts {
 					hostMacLower := strings.ToLower(host.L2Ident.ID)
@@ -727,10 +726,8 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					}
 				}
 
-				if !foundHost {
-					logger.Info("VM not yet visible in LAN browser, will retry", "vmID", *machine.Status.VMID, "mac", vm.Mac)
-					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-				}
+				logger.Info("VM not yet visible in LAN browser, will retry", "vmID", *machine.Status.VMID, "mac", vm.Mac)
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 			}
 
 			// -----------------------
@@ -866,42 +863,38 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			} else {
 				logger.Info("Searching for VM in LAN browser", "vmID", vm.ID, "vmMac", vm.Mac, "totalHosts", len(lanHosts))
 				// Find the host with matching MAC address (case-insensitive comparison)
-				foundHost := false
 				vmMacLower := strings.ToLower(vm.Mac)
-				for _, host := range lanHosts {
-					hostMacLower := strings.ToLower(host.L2Ident.ID)
-					if hostMacLower == vmMacLower {
-						foundHost = true
-						// Extract IPv4 addresses from L3Connectivities
-						var addresses []clusterv1.MachineAddress
-						for _, l3 := range host.L3Connectivities {
-							if l3.Type == "ipv4" && l3.Address != "" {
-								addresses = append(addresses, clusterv1.MachineAddress{
-									Type:    clusterv1.MachineInternalIP,
-									Address: l3.Address,
-								})
-							}
-						}
-						if len(addresses) > 0 {
-							machine.Status.Addresses = addresses
-							logger.Info("Found IP address for VM", "vmID", vm.ID, "mac", vm.Mac, "addresses", addresses)
-						} else {
-							logger.Info("VM found in LAN browser but no IP address yet, will retry", "vmID", vm.ID, "mac", vm.Mac)
-							// VM is in LAN browser but no IP yet - requeue to check again
-							machine.Status.VMID = &vm.ID
-							machine.Status.DiskPath = finalImagePath
-							if err := r.Status().Update(ctx, &machine); err != nil {
-								logger.Error(err, "Failed to update FreeboxMachine status")
-								return ctrl.Result{}, err
-							}
-							return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-						}
-						break
-					}
-				}
-				if !foundHost {
+				idx := slices.IndexFunc(lanHosts, func(h freeboxTypes.LanInterfaceHost) bool {
+					return strings.ToLower(h.L2Ident.ID) == vmMacLower
+				})
+				if idx < 0 {
 					logger.Info("VM not yet visible in LAN browser, will retry", "vmID", vm.ID, "mac", vm.Mac)
 					// VM not yet in LAN browser - requeue to check again
+					machine.Status.VMID = &vm.ID
+					machine.Status.DiskPath = finalImagePath
+					if err := r.Status().Update(ctx, &machine); err != nil {
+						logger.Error(err, "Failed to update FreeboxMachine status")
+						return ctrl.Result{}, err
+					}
+					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+				}
+				host := lanHosts[idx]
+				// Extract IPv4 addresses from L3Connectivities
+				var addresses []clusterv1.MachineAddress
+				for _, l3 := range host.L3Connectivities {
+					if l3.Type == "ipv4" && l3.Address != "" {
+						addresses = append(addresses, clusterv1.MachineAddress{
+							Type:    clusterv1.MachineInternalIP,
+							Address: l3.Address,
+						})
+					}
+				}
+				if len(addresses) > 0 {
+					machine.Status.Addresses = addresses
+					logger.Info("Found IP address for VM", "vmID", vm.ID, "mac", vm.Mac, "addresses", addresses)
+				} else {
+					logger.Info("VM found in LAN browser but no IP address yet, will retry", "vmID", vm.ID, "mac", vm.Mac)
+					// VM is in LAN browser but no IP yet - requeue to check again
 					machine.Status.VMID = &vm.ID
 					machine.Status.DiskPath = finalImagePath
 					if err := r.Status().Update(ctx, &machine); err != nil {
