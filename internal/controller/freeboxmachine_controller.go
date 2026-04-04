@@ -789,24 +789,48 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				logger.Info("Using raw disk type", "imagePath", finalImagePath, "extension", finalExt)
 			}
 
-			vmPayload := freeboxTypes.VirtualMachinePayload{
-				Name:              machine.Name,
-				DiskPath:          freeboxTypes.Base64Path(finalImagePath),
-				DiskType:          diskType,
-				Memory:            machine.Spec.MemoryMB, // in MB
-				VCPUs:             machine.Spec.VCPUs,
-				OS:                freeboxTypes.UnknownOS,
-				EnableCloudInit:   true,
-				CloudInitUserData: string(bootstrapData),
+			// Check if VM already exists with same name AND disk path, to guard
+			// against duplicate creation if Status().Update failed after a previous
+			// CreateVirtualMachine call.
+			// If the list call fails (e.g. empty result from Freebox), skip dedup and proceed to create.
+			var vm freeboxTypes.VirtualMachine
+			var foundVM *freeboxTypes.VirtualMachine
+			existingVMs, listErr := r.FreeboxClient.ListVirtualMachines(ctx)
+			if listErr != nil {
+				logger.Info("Could not list virtual machines before creation, skipping dedup check", "error", listErr)
+			} else {
+				for i := range existingVMs {
+					if existingVMs[i].Name == machine.Name && existingVMs[i].DiskPath == freeboxTypes.Base64Path(finalImagePath) {
+						foundVM = &existingVMs[i]
+						break
+					}
+				}
 			}
 
-			vm, err := r.FreeboxClient.CreateVirtualMachine(ctx, vmPayload)
-			if err != nil {
-				logger.Error(err, "Failed to create virtual machine")
-				return ctrl.Result{}, err
-			}
+			if foundVM != nil {
+				logger.Info("VM already exists, reusing", "vmID", foundVM.ID, "name", foundVM.Name)
+				vm = *foundVM
+			} else {
+				vmPayload := freeboxTypes.VirtualMachinePayload{
+					Name:              machine.Name,
+					DiskPath:          freeboxTypes.Base64Path(finalImagePath),
+					DiskType:          diskType,
+					Memory:            machine.Spec.MemoryMB, // in MB
+					VCPUs:             machine.Spec.VCPUs,
+					OS:                freeboxTypes.UnknownOS,
+					EnableCloudInit:   true,
+					CloudInitUserData: string(bootstrapData),
+				}
 
-			logger.Info("VM created successfully", "vmID", vm.ID, "name", vm.Name)
+				createdVM, createErr := r.FreeboxClient.CreateVirtualMachine(ctx, vmPayload)
+				if createErr != nil {
+					logger.Error(createErr, "Failed to create virtual machine")
+					return ctrl.Result{}, createErr
+				}
+
+				vm = createdVM
+				logger.Info("VM created successfully", "vmID", vm.ID, "name", vm.Name)
+			}
 
 			// Set providerID in spec to match CAPI contract
 			// Format: freebox://<vm-id>

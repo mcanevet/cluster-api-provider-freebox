@@ -648,9 +648,12 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 			diskPath := freeboxMachine.Status.DiskPath
 			if diskPath != "" {
 				Eventually(func() error {
-					// Try to list VMs to ensure API is responsive
+					// Try to list VMs to ensure API is responsive.
+					// The Freebox returns an empty body (no "result" key) when there are no VMs,
+					// which the client decodes as an error. Treat that specific error as success
+					// (API is responsive, zero VMs is the expected state after deletion).
 					_, err := freeboxClient.ListVirtualMachines(ctx)
-					if err != nil {
+					if err != nil && !strings.Contains(err.Error(), "unexpected end of JSON input") {
 						return fmt.Errorf("Freebox API not responsive: %w", err)
 					}
 					// If we get here, disk cleanup should have happened
