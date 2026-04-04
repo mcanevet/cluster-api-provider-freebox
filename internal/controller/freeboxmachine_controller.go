@@ -217,16 +217,34 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if phase == "" {
 		logger.Info("Starting image download", "url", imageURL, "dest", r.FreeboxDownloadDir)
 
-		reqDownload := freeboxTypes.DownloadRequest{
-			DownloadURLs:      []string{imageURL},
-			DownloadDirectory: r.FreeboxDownloadDir,
-			Filename:          imageName,
+		// Check for an existing download task to avoid duplicates (e.g. after a
+		// controller restart that occurred between AddDownloadTask and the
+		// subsequent Status().Update call).
+		var newTaskID int64
+		existingTasks, err := r.FreeboxClient.ListDownloadTasks(ctx)
+		if err != nil {
+			logger.Error(err, "Failed to list download tasks")
+			return ctrl.Result{}, err
+		}
+		for _, t := range existingTasks {
+			if t.Name == imageName && t.Status != freeboxTypes.DownloadTaskStatusError {
+				logger.Info("Reusing existing download task", "taskID", t.ID, "status", t.Status)
+				newTaskID = t.ID
+				break
+			}
 		}
 
-		newTaskID, err := r.FreeboxClient.AddDownloadTask(ctx, reqDownload)
-		if err != nil {
-			logger.Error(err, "Failed to create download task")
-			return ctrl.Result{}, err
+		if newTaskID == 0 {
+			reqDownload := freeboxTypes.DownloadRequest{
+				DownloadURLs:      []string{imageURL},
+				DownloadDirectory: r.FreeboxDownloadDir,
+				Filename:          imageName,
+			}
+			newTaskID, err = r.FreeboxClient.AddDownloadTask(ctx, reqDownload)
+			if err != nil {
+				logger.Error(err, "Failed to create download task")
+				return ctrl.Result{}, err
+			}
 		}
 
 		// Set Ready condition to False - provisioning has started
@@ -260,6 +278,13 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		switch downloadTask.Status {
 		case freeboxTypes.DownloadTaskStatusDone:
 			logger.Info("Download completed", "taskID", taskID)
+
+			// Remove the task from the Freebox downloader UI now that the file
+			// has been downloaded. The file itself will be cleaned up after the
+			// copy/extract step completes.
+			if err := r.FreeboxClient.DeleteDownloadTask(ctx, taskID); err != nil {
+				logger.Error(err, "Failed to delete download task (non-fatal)", "taskID", taskID)
+			}
 
 			if isCompressedFile(imageName) {
 				// Extract from download dir to VM storage
@@ -341,6 +366,14 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		switch fsTask.State {
 		case taskStateDone:
 			logger.Info("Extraction completed", "taskID", taskID)
+
+			// Remove the compressed archive from the downloads directory now that
+			// it has been successfully extracted to VM storage.
+			if rmTask, err := r.FreeboxClient.RemoveFiles(ctx, []string{downloadPath}); err != nil {
+				logger.Error(err, "Failed to remove downloaded archive (non-fatal)", "path", downloadPath)
+			} else {
+				logger.Info("Scheduled removal of downloaded archive", "taskID", rmTask.ID, "path", downloadPath)
+			}
 
 			// After extraction, file has the underlying name (without compression suffix)
 			// Need to rename to VM-named file
@@ -425,6 +458,14 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		switch fsTask.State {
 		case taskStateDone:
 			logger.Info("Copy completed", "taskID", taskID)
+
+			// Remove the source file from the downloads directory now that it
+			// has been successfully copied to VM storage.
+			if rmTask, err := r.FreeboxClient.RemoveFiles(ctx, []string{downloadPath}); err != nil {
+				logger.Error(err, "Failed to remove downloaded file (non-fatal)", "path", downloadPath)
+			} else {
+				logger.Info("Scheduled removal of downloaded file", "taskID", rmTask.ID, "path", downloadPath)
+			}
 
 			// After copy completes, we need to rename from source filename to VM name
 			// The copied file has the source image name, we need to rename it to VM name
