@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -90,7 +91,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// --- Handle deletion ---
 	if !machine.DeletionTimestamp.IsZero() {
-		if containsString(machine.Finalizers, FreeboxMachineFinalizer) {
+		if slices.Contains(machine.Finalizers, FreeboxMachineFinalizer) {
 			logger.Info("Deleting VM because FreeboxMachine is being deleted")
 
 			// Set Ready condition to False during deletion
@@ -163,7 +164,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 
 			// Remove finalizer
-			machine.Finalizers = removeString(machine.Finalizers, FreeboxMachineFinalizer)
+			machine.Finalizers = slices.DeleteFunc(machine.Finalizers, func(s string) bool { return s == FreeboxMachineFinalizer })
 			if err := r.Update(ctx, &machine); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -172,7 +173,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// --- Ensure finalizer ---
-	if !containsString(machine.Finalizers, FreeboxMachineFinalizer) {
+	if !slices.Contains(machine.Finalizers, FreeboxMachineFinalizer) {
 		machine.Finalizers = append(machine.Finalizers, FreeboxMachineFinalizer)
 		if err := r.Update(ctx, &machine); err != nil {
 			return ctrl.Result{}, err
@@ -968,25 +969,6 @@ func stripCompressionSuffix(name string) string {
 		return strings.TrimSuffix(name, ext)
 	}
 	return name
-}
-
-func containsString(slice []string, s string) bool {
-	for _, item := range slice {
-		if item == s {
-			return true
-		}
-	}
-	return false
-}
-
-func removeString(slice []string, s string) []string {
-	var result []string
-	for _, item := range slice {
-		if item != s {
-			result = append(result, item)
-		}
-	}
-	return result
 }
 
 // SetupWithManager sets up the controller with the Manager.
