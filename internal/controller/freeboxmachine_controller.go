@@ -105,7 +105,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "Deleting",
 				Message: "Deleting infrastructure resources",
 			})
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status during deletion")
+					return ctrl.Result{}, err
+				}
+			}
 
 			vmID := machine.Status.VMID
 			if vmID != nil {
@@ -260,7 +265,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			Reason:  "Downloading",
 			Message: fmt.Sprintf("phase=download task_id=%d", newTaskID),
 		})
-		_ = r.Status().Update(ctx, &machine)
+		if err := r.Status().Update(ctx, &machine); err != nil {
+			if !errors.IsConflict(err) {
+				logger.Error(err, "Failed to update status after starting download")
+				return ctrl.Result{}, err
+			}
+		}
 
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
@@ -303,7 +313,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					Message: fmt.Sprintf("phase=copy task_id=0 src=%s dst=%s", downloadPath, finalImagePath),
 				})
 			}
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status after download completed")
+					return ctrl.Result{}, err
+				}
+			}
 			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 
 		case freeboxTypes.DownloadTaskStatusError:
@@ -320,7 +335,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "DownloadFailed",
 				Message: "Image download failed",
 			})
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status after download failure")
+					return ctrl.Result{}, err
+				}
+			}
 			return ctrl.Result{}, fmt.Errorf("download failed")
 
 		default:
@@ -353,7 +373,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "Extracting",
 				Message: fmt.Sprintf("phase=extract task_id=%d", fsTask.ID),
 			})
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status after starting extraction")
+					return ctrl.Result{}, err
+				}
+			}
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 
@@ -386,7 +411,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					Reason:  "Renaming",
 					Message: fmt.Sprintf("phase=rename task_id=0 src=%s dst=%s", extractedPath, finalImagePath),
 				})
-				_ = r.Status().Update(ctx, &machine)
+				if err := r.Status().Update(ctx, &machine); err != nil {
+					if !errors.IsConflict(err) {
+						logger.Error(err, "Failed to update status before rename")
+						return ctrl.Result{}, err
+					}
+				}
 				return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 			}
 
@@ -396,7 +426,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "Resizing",
 				Message: "phase=resize task_id=0",
 			})
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status before resize")
+					return ctrl.Result{}, err
+				}
+			}
 			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 		case taskStateError:
 			logger.Error(fmt.Errorf("extraction failed"), "Extraction failed")
@@ -412,7 +447,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "ExtractionFailed",
 				Message: "Image extraction failed",
 			})
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status after extraction failure")
+					return ctrl.Result{}, err
+				}
+			}
 			return ctrl.Result{}, fmt.Errorf("extraction failed")
 		default:
 			// Still in progress
@@ -445,7 +485,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "Copying",
 				Message: fmt.Sprintf("phase=copy task_id=%d", fsTask.ID),
 			})
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status after starting copy")
+					return ctrl.Result{}, err
+				}
+			}
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 
@@ -478,7 +523,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					Reason:  "Renaming",
 					Message: fmt.Sprintf("phase=rename task_id=0 src=%s dst=%s", copiedPath, finalImagePath),
 				})
-				_ = r.Status().Update(ctx, &machine)
+				if err := r.Status().Update(ctx, &machine); err != nil {
+					if !errors.IsConflict(err) {
+						logger.Error(err, "Failed to update status before rename")
+						return ctrl.Result{}, err
+					}
+				}
 				return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 			}
 
@@ -489,7 +539,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "Resizing",
 				Message: "phase=resize task_id=0",
 			})
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status before resize")
+					return ctrl.Result{}, err
+				}
+			}
 			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 
 		case taskStateError:
@@ -506,7 +561,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "CopyFailed",
 				Message: "Image copy failed",
 			})
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status after copy failure")
+					return ctrl.Result{}, err
+				}
+			}
 			return ctrl.Result{}, fmt.Errorf("copy failed")
 
 		default:
@@ -545,7 +605,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "Renaming",
 				Message: fmt.Sprintf("phase=rename task_id=%d src=%s dst=%s", mvTask.ID, srcPath, dstPath),
 			})
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status after starting rename")
+					return ctrl.Result{}, err
+				}
+			}
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 
@@ -564,7 +629,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "Resizing",
 				Message: "phase=resize task_id=0",
 			})
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status after rename")
+					return ctrl.Result{}, err
+				}
+			}
 			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 		case taskStateError:
 			logger.Error(fmt.Errorf("rename failed"), "Rename failed", "error", fsTask.Error)
@@ -580,7 +650,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "RenameFailed",
 				Message: fmt.Sprintf("Image rename failed: %s", fsTask.Error),
 			})
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status after rename failure")
+					return ctrl.Result{}, err
+				}
+			}
 			return ctrl.Result{}, fmt.Errorf("rename failed: %s", fsTask.Error)
 		default:
 			// Still in progress
@@ -616,7 +691,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Reason:  "Resizing",
 				Message: fmt.Sprintf("phase=resize task_id=%d", newTaskID),
 			})
-			_ = r.Status().Update(ctx, &machine)
+			if err := r.Status().Update(ctx, &machine); err != nil {
+				if !errors.IsConflict(err) {
+					logger.Error(err, "Failed to update status after starting resize")
+					return ctrl.Result{}, err
+				}
+			}
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 
@@ -635,7 +715,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					Reason:  "ResizeFailed",
 					Message: "Disk resize failed",
 				})
-				_ = r.Status().Update(ctx, &machine)
+				if err := r.Status().Update(ctx, &machine); err != nil {
+					if !errors.IsConflict(err) {
+						logger.Error(err, "Failed to update status after resize failure")
+						return ctrl.Result{}, err
+					}
+				}
 				return ctrl.Result{}, fmt.Errorf("resize failed")
 			}
 
