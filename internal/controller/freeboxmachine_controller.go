@@ -121,23 +121,18 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					// Don't return error here - the VM might already be stopped
 				}
 
-				// Wait for VM to be fully stopped before attempting deletion
-				logger.Info("Waiting for VM to stop", "vmID", *vmID)
-				for i := 0; i < 30; i++ { // Wait up to 30 seconds
-					vm, err := r.FreeboxClient.GetVirtualMachine(ctx, *vmID)
-					if err != nil {
-						logger.Error(err, "Failed to get VM status while waiting for stop")
-						break
-					}
-
-					if vm.Status == "stopped" {
-						logger.Info("VM is now stopped", "vmID", *vmID)
-						break
-					}
-
-					logger.Info("VM not yet stopped, waiting...", "vmID", *vmID, "status", vm.Status, "attempt", i+1)
-					time.Sleep(1 * time.Second)
+				// Check if VM has stopped; if not, requeue instead of blocking
+				vm, err := r.FreeboxClient.GetVirtualMachine(ctx, *vmID)
+				if err != nil {
+					logger.Error(err, "Failed to get VM status while waiting for stop")
+					// Requeue to retry the status check
+					return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 				}
+				if vm.Status != "stopped" {
+					logger.Info("VM not yet stopped, requeueing", "vmID", *vmID, "status", vm.Status)
+					return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+				}
+				logger.Info("VM is stopped, proceeding with deletion", "vmID", *vmID)
 
 				// Now delete the VM
 				if err := r.FreeboxClient.DeleteVirtualMachine(ctx, *vmID); err != nil {
