@@ -132,7 +132,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				}
 				return updatedCluster.Status.Initialization.Provisioned != nil &&
 					*updatedCluster.Status.Initialization.Provisioned
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(BeTrue(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-crd")...).Should(BeTrue(),
 				"FreeboxCluster should be provisioned")
 
 			By("Creating a FreeboxMachineTemplate for control plane nodes")
@@ -159,7 +159,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 			Eventually(func() error {
 				template := &infrastructurev1alpha1.FreeboxMachineTemplate{}
 				return clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxMachineTemplate), template)
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-crd")...).Should(Succeed(),
 				"FreeboxMachineTemplate should be created")
 
 			By("Creating a KubeadmControlPlane resource")
@@ -267,7 +267,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 					}
 				}
 				return fmt.Errorf("no Machine found for cluster test-cluster")
-			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(Succeed(),
 				"KubeadmControlPlane should create a Machine")
 
 			By("Verifying Machine has bootstrap dataSecretName set")
@@ -298,7 +298,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 					}
 				}
 				return fmt.Errorf("Machine %s not found", createdMachine.GetName())
-			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(Succeed(),
 				"Machine should have bootstrap dataSecretName set by CABPK")
 
 			By(fmt.Sprintf("Verifying bootstrap Secret %s was created by CABPK", bootstrapDataSecretName))
@@ -307,7 +307,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				return clusterProxy.GetClient().Get(ctx,
 					types.NamespacedName{Name: bootstrapDataSecretName, Namespace: namespace.Name},
 					bootstrapSecret)
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-crd")...).Should(Succeed(),
 				"Bootstrap Secret should be created by CABPK")
 
 			By("Verifying bootstrap Secret contains cloud-init data with test markers")
@@ -334,7 +334,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 					}
 				}
 				return fmt.Errorf("FreeboxMachine not yet created for Machine %s", createdMachine.GetName())
-			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(Succeed(),
 				"FreeboxMachine should be created by infrastructure controller")
 
 			By("Verifying Ready condition is False with Reason=Provisioning during image preparation")
@@ -367,7 +367,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 
 				freeboxMachine = machine // Update reference
 				return nil
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-crd")...).Should(Succeed(),
 				"Ready condition should be False with Reason=Provisioning during image preparation")
 
 			By("Verifying FreeboxMachine has VMID set")
@@ -383,7 +383,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				}
 				freeboxMachine = machine // Update reference
 				return nil
-			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(Succeed(),
 				"FreeboxMachine should have VMID set")
 
 			By(fmt.Sprintf("Verifying VM %d was created with cloud-init enabled", *vmID))
@@ -398,7 +398,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				}
 
 				return nil
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-crd")...).Should(Succeed(),
 				"VM should have cloud-init enabled")
 
 			By("Verifying VM has bootstrap data from CABPK")
@@ -417,7 +417,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				}
 
 				return nil
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-crd")...).Should(Succeed(),
 				"VM should have bootstrap data from CABPK with test markers")
 
 			By("Verifying FreeboxMachine has IP addresses populated")
@@ -427,7 +427,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 					return false
 				}
 				return len(machine.Status.Addresses) > 0
-			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(BeTrue(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(BeTrue(),
 				"FreeboxMachine should have IP addresses")
 
 			By("Verifying Ready condition becomes True with Reason=InfrastructureReady when fully provisioned")
@@ -460,7 +460,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				}
 
 				return nil
-			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(Succeed(),
 				"Ready condition should become True with Reason=InfrastructureReady")
 
 			By("Verifying initialization.provisioned is set to true")
@@ -479,7 +479,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				}
 
 				return nil
-			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(Succeed(),
 				"initialization.provisioned should be true")
 
 			By("Verifying providerID is set in format 'freebox://<vm-id>'")
@@ -498,7 +498,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				}
 
 				return nil
-			}, e2eConfig.GetIntervals("default", "wait-machine")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(Succeed(),
 				"providerID should be set in format 'freebox://<vm-id>'")
 
 			By("Waiting for CAPI Cluster to be ready")
@@ -522,7 +522,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 					return false
 				}
 				return phase == "Provisioned"
-			}, e2eConfig.GetIntervals("default", "wait-cluster")...).Should(BeTrue(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-cluster")...).Should(BeTrue(),
 				"Cluster should become ready")
 
 			By("Verifying API server is accessible on control plane endpoint")
@@ -567,7 +567,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				}
 
 				return nil
-			}, e2eConfig.GetIntervals("default", "wait-control-plane")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-control-plane")...).Should(Succeed(),
 				"API server should be accessible and responding to requests")
 
 			By("Verifying VM exists in Freebox before deletion")
@@ -579,7 +579,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				}
 				vmID64 = vm.ID
 				return nil
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-crd")...).Should(Succeed(),
 				"VM should exist in Freebox before deletion")
 
 			Expect(vmID64).To(Equal(*vmID), "VM should be retrieved before deletion")
@@ -622,14 +622,14 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				}
 
 				return nil
-			}, e2eConfig.GetIntervals("default", "wait-crd")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-crd")...).Should(Succeed(),
 				"Ready condition should transition to False/Deleting")
 
 			By("Waiting for FreeboxMachine to be fully deleted")
 			WaitForFreeboxMachineDeleted(ctx, WaitForFreeboxMachineDeletedInput{
 				Getter:  clusterProxy.GetClient(),
 				Machine: freeboxMachine,
-			}, e2eConfig.GetIntervals("default", "wait-delete")...)
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-delete")...)
 
 			By("Verifying VM is deleted from Freebox")
 			Eventually(func() error {
@@ -642,7 +642,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 					return fmt.Errorf("unexpected error checking VM deletion: %w", err)
 				}
 				return fmt.Errorf("VM still exists in Freebox, expected it to be deleted")
-			}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(Succeed(),
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-delete")...).Should(Succeed(),
 				"VM should be deleted from Freebox")
 
 			By("Verifying disk file is deleted from Freebox")
@@ -661,7 +661,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 					// If we get here, disk cleanup should have happened
 					// We can't directly verify file deletion via API, but we verified VM is gone
 					return nil
-				}, e2eConfig.GetIntervals("default", "wait-delete")...).Should(Succeed(),
+				}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-delete")...).Should(Succeed(),
 					"Disk cleanup should complete")
 			}
 
