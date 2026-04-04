@@ -99,7 +99,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 			capiCluster = &unstructured.Unstructured{}
 			capiCluster.SetGroupVersionKind(schema.GroupVersionKind{
 				Group:   "cluster.x-k8s.io",
-				Version: "v1beta1",
+				Version: "v1beta2",
 				Kind:    "Cluster",
 			})
 			capiCluster.SetName("test-cluster")
@@ -107,17 +107,17 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 
 			// Set infrastructure ref
 			infraRef := map[string]interface{}{
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha1",
-				"kind":       "FreeboxCluster",
-				"name":       freeboxCluster.Name,
+				"apiGroup": "infrastructure.cluster.x-k8s.io",
+				"kind":     "FreeboxCluster",
+				"name":     freeboxCluster.Name,
 			}
 			Expect(unstructured.SetNestedField(capiCluster.Object, infraRef, "spec", "infrastructureRef")).To(Succeed())
 
 			// Set control plane ref
 			controlPlaneRef := map[string]interface{}{
-				"apiVersion": "controlplane.cluster.x-k8s.io/v1beta1",
-				"kind":       "KubeadmControlPlane",
-				"name":       "test-cp",
+				"apiGroup": "controlplane.cluster.x-k8s.io",
+				"kind":     "KubeadmControlPlane",
+				"name":     "test-cp",
 			}
 			Expect(unstructured.SetNestedField(capiCluster.Object, controlPlaneRef, "spec", "controlPlaneRef")).To(Succeed())
 
@@ -166,7 +166,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 			kubeadmControlPlane = &unstructured.Unstructured{}
 			kubeadmControlPlane.SetGroupVersionKind(schema.GroupVersionKind{
 				Group:   "controlplane.cluster.x-k8s.io",
-				Version: "v1beta1",
+				Version: "v1beta2",
 				Kind:    "KubeadmControlPlane",
 			})
 			kubeadmControlPlane.SetName("test-cp")
@@ -176,12 +176,14 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 			Expect(unstructured.SetNestedField(kubeadmControlPlane.Object, int64(1), "spec", "replicas")).To(Succeed())
 			Expect(unstructured.SetNestedField(kubeadmControlPlane.Object, "v1.34.0", "spec", "version")).To(Succeed())
 
-			// Set machine template
+			// Set machine template (v1beta2: infrastructureRef is under spec.machineTemplate.spec.infrastructureRef)
 			machineTemplate := map[string]interface{}{
-				"infrastructureRef": map[string]interface{}{
-					"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha1",
-					"kind":       "FreeboxMachineTemplate",
-					"name":       freeboxMachineTemplate.Name,
+				"spec": map[string]interface{}{
+					"infrastructureRef": map[string]interface{}{
+						"apiGroup": "infrastructure.cluster.x-k8s.io",
+						"kind":     "FreeboxMachineTemplate",
+						"name":     freeboxMachineTemplate.Name,
+					},
 				},
 			}
 			Expect(unstructured.SetNestedField(kubeadmControlPlane.Object, machineTemplate, "spec", "machineTemplate")).To(Succeed())
@@ -249,7 +251,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				machineList := &unstructured.UnstructuredList{}
 				machineList.SetGroupVersionKind(schema.GroupVersionKind{
 					Group:   "cluster.x-k8s.io",
-					Version: "v1beta1",
+					Version: "v1beta2",
 					Kind:    "MachineList",
 				})
 
@@ -274,7 +276,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				machineList := &unstructured.UnstructuredList{}
 				machineList.SetGroupVersionKind(schema.GroupVersionKind{
 					Group:   "cluster.x-k8s.io",
-					Version: "v1beta1",
+					Version: "v1beta2",
 					Kind:    "MachineList",
 				})
 
@@ -504,7 +506,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				cluster := &unstructured.Unstructured{}
 				cluster.SetGroupVersionKind(schema.GroupVersionKind{
 					Group:   "cluster.x-k8s.io",
-					Version: "v1beta1",
+					Version: "v1beta2",
 					Kind:    "Cluster",
 				})
 				if err := clusterProxy.GetClient().Get(ctx, types.NamespacedName{
