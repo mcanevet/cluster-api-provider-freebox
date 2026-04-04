@@ -28,7 +28,7 @@ import (
 type FreeboxMachineSpec struct {
 	// providerID must match the provider ID as seen on the node object corresponding to this machine.
 	// For Kubernetes Nodes running on the Freebox provider, this value is set by the corresponding CPI component
-	// and it has the format freebox:////<vm-name>.
+	// and it has the format freebox://<vm-id> (e.g. freebox://42).
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=512
