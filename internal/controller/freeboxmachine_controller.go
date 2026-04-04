@@ -193,7 +193,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// The final image will be named after the VM (machine.Spec.Name) with the underlying disk extension
 	underlyingName := imageName
 	if isCompressedFile(imageName) {
-		underlyingName = removeCompressionExtension(imageName)
+		underlyingName = stripCompressionSuffix(imageName)
 	}
 	ext := path.Ext(underlyingName)
 	if ext == "" {
@@ -367,7 +367,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 			// After extraction, file has the underlying name (without compression suffix)
 			// Need to rename to VM-named file
-			extractedPath := path.Join(r.VMStoragePath, removeCompressionExtension(imageName))
+			extractedPath := path.Join(r.VMStoragePath, stripCompressionSuffix(imageName))
 			if extractedPath != finalImagePath {
 				logger.Info("Starting rename after extraction", "from", extractedPath, "to", finalImagePath)
 				machine.Status.Phase = "rename"
@@ -968,11 +968,6 @@ func stripCompressionSuffix(name string) string {
 		return strings.TrimSuffix(name, ext)
 	}
 	return name
-}
-
-// removeCompressionExtension is an alias for stripCompressionSuffix
-func removeCompressionExtension(name string) string {
-	return stripCompressionSuffix(name)
 }
 
 func containsString(slice []string, s string) bool {

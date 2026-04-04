@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -85,3 +86,26 @@ var _ = Describe("FreeboxMachine Controller", func() {
 		})
 	})
 })
+
+func TestStripCompressionSuffix(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"nocloud.raw.xz", "nocloud.raw"},
+		{"image.img.gz", "image.img"},
+		{"archive.tar.bz2", "archive.tar"},
+		{"file.zip", "file"},
+		{"nocloud.tar", "nocloud"},
+		{"plain.raw", "plain"}, // no compression extension — falls back to path.Ext trimming
+		{"noext", "noext"},
+		{"UPPER.XZ", "UPPER"},
+		{"mixed.Gz", "mixed"},
+	}
+	for _, tc := range tests {
+		got := stripCompressionSuffix(tc.input)
+		if got != tc.want {
+			t.Errorf("stripCompressionSuffix(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
