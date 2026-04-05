@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.1](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.3.0...v0.3.1) (2026-04-05)
+
+
+### Bug Fixes
+
+* deduplicate download tasks and clean up downloads after copy/extract ([0df8599](https://github.com/mcanevet/cluster-api-provider-freebox/commit/0df85992c8e2946be2c035d7c178a1be266bc220))
+* deduplicate VM creation and handle empty ListVirtualMachines response ([8e243e3](https://github.com/mcanevet/cluster-api-provider-freebox/commit/8e243e38e705609da9015df3bb2cdc1b06a75182))
+* handle errors from Status().Update() instead of silencing them ([bda8bc2](https://github.com/mcanevet/cluster-api-provider-freebox/commit/bda8bc280b79d02243fce94a3f0bae90488c30ec))
+* migrate e2e tests from v1beta1 to v1beta2 CAPI APIs ([9676d6a](https://github.com/mcanevet/cluster-api-provider-freebox/commit/9676d6ac5298cede7047674e51a22886d3df60b6))
+* replace blocking time.Sleep VM-stop loop with RequeueAfter in deletion path ([b30b3b5](https://github.com/mcanevet/cluster-api-provider-freebox/commit/b30b3b5edfa58f1b605d83928f4145e17c4fa017))
+* replace hardcoded "default" with clusterProxy.GetName() in e2e GetIntervals calls ([284178c](https://github.com/mcanevet/cluster-api-provider-freebox/commit/284178cde245f308b7b71d10edf88bf33f3c3320))
+
 ## [0.3.0](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.2.1...v0.3.0) (2025-11-15)
 
 
