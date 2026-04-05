@@ -74,7 +74,7 @@ E2E_MANAGEMENT_CLUSTER ?= freebox-test
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run the e2e tests. The test framework will create its own Kind cluster.
 	$(MAKE) docker-build IMG=example.com/cluster-api-provider-freebox:v0.0.1
-	DOCKER_HOST=unix://$(HOME)/.docker/run/docker.sock KIND=$(KIND) go test -timeout 30m -tags=e2e ./test/e2e/ -v -ginkgo.v
+	DOCKER_HOST=unix://$(HOME)/.docker/run/docker.sock KIND=$(KIND) go test -timeout 10m -tags=e2e ./test/e2e/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e

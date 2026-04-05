@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"regexp"
 	"strings"
 	"time"
 
@@ -121,18 +120,23 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					// Don't return error here - the VM might already be stopped
 				}
 
-				// Check if VM has stopped; if not, requeue instead of blocking
-				vm, err := r.FreeboxClient.GetVirtualMachine(ctx, *vmID)
-				if err != nil {
-					logger.Error(err, "Failed to get VM status while waiting for stop")
-					// Requeue to retry the status check
-					return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+				// Wait for VM to be fully stopped before attempting deletion
+				logger.Info("Waiting for VM to stop", "vmID", *vmID)
+				for i := 0; i < 30; i++ { // Wait up to 30 seconds
+					vm, err := r.FreeboxClient.GetVirtualMachine(ctx, *vmID)
+					if err != nil {
+						logger.Error(err, "Failed to get VM status while waiting for stop")
+						break
+					}
+
+					if vm.Status == "stopped" {
+						logger.Info("VM is now stopped", "vmID", *vmID)
+						break
+					}
+
+					logger.Info("VM not yet stopped, waiting...", "vmID", *vmID, "status", vm.Status, "attempt", i+1)
+					time.Sleep(1 * time.Second)
 				}
-				if vm.Status != "stopped" {
-					logger.Info("VM not yet stopped, requeueing", "vmID", *vmID, "status", vm.Status)
-					return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
-				}
-				logger.Info("VM is stopped, proceeding with deletion", "vmID", *vmID)
 
 				// Now delete the VM
 				if err := r.FreeboxClient.DeleteVirtualMachine(ctx, *vmID); err != nil {
@@ -202,14 +206,9 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	vmImageName := machine.Spec.Name + ext
 	finalImagePath := path.Join(r.VMStoragePath, vmImageName)
 
-	// Retrieve current phase
-	phaseCond := meta.FindStatusCondition(machine.Status.Conditions, "ImagePhase")
-	var phase string
-	var taskID int64
-
-	if phaseCond != nil {
-		_, _ = fmt.Sscanf(phaseCond.Message, "phase=%s task_id=%d", &phase, &taskID)
-	}
+	// Retrieve current phase from status fields
+	phase := machine.Status.Phase
+	taskID := machine.Status.TaskID
 
 	// -----------------------
 	// 1. Start download
@@ -254,12 +253,8 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			Reason:  "Provisioning",
 			Message: "Downloading and preparing disk image",
 		})
-		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-			Type:    "ImagePhase",
-			Status:  metav1.ConditionFalse,
-			Reason:  "Downloading",
-			Message: fmt.Sprintf("phase=download task_id=%d", newTaskID),
-		})
+		machine.Status.Phase = "download"
+		machine.Status.TaskID = newTaskID
 		if err := r.Status().Update(ctx, &machine); err != nil {
 			if !errors.IsConflict(err) {
 				logger.Error(err, "Failed to update status after starting download")
@@ -293,20 +288,12 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 			if isCompressedFile(imageName) {
 				// Extract from download dir to VM storage
-				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-					Type:    "ImagePhase",
-					Status:  metav1.ConditionFalse,
-					Reason:  "Extracting",
-					Message: fmt.Sprintf("phase=extract task_id=0 src=%s dst=%s", downloadPath, r.VMStoragePath),
-				})
+				machine.Status.Phase = "extract"
+				machine.Status.TaskID = 0
 			} else {
 				// Copy from download dir to VM storage
-				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-					Type:    "ImagePhase",
-					Status:  metav1.ConditionFalse,
-					Reason:  "Copying",
-					Message: fmt.Sprintf("phase=copy task_id=0 src=%s dst=%s", downloadPath, finalImagePath),
-				})
+				machine.Status.Phase = "copy"
+				machine.Status.TaskID = 0
 			}
 			if err := r.Status().Update(ctx, &machine); err != nil {
 				if !errors.IsConflict(err) {
@@ -322,12 +309,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Type:    ReadyCondition,
 				Status:  metav1.ConditionFalse,
 				Reason:  "ProvisioningFailed",
-				Message: "Image download failed",
-			})
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    "ImagePhase",
-				Status:  metav1.ConditionFalse,
-				Reason:  "DownloadFailed",
 				Message: "Image download failed",
 			})
 			if err := r.Status().Update(ctx, &machine); err != nil {
@@ -347,8 +328,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// 3. Extraction phase
 	// -----------------------
 	if phase == "extract" {
-		_, _ = fmt.Sscanf(phaseCond.Message, "phase=extract task_id=%d", &taskID)
-
 		if taskID == 0 {
 			fsPayload := freeboxTypes.ExtractFilePayload{
 				Src: freeboxTypes.Base64Path(downloadPath),
@@ -362,12 +341,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 
 			logger.Info("Extraction started", "taskID", fsTask.ID)
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    "ImagePhase",
-				Status:  metav1.ConditionFalse,
-				Reason:  "Extracting",
-				Message: fmt.Sprintf("phase=extract task_id=%d", fsTask.ID),
-			})
+			machine.Status.TaskID = fsTask.ID
 			if err := r.Status().Update(ctx, &machine); err != nil {
 				if !errors.IsConflict(err) {
 					logger.Error(err, "Failed to update status after starting extraction")
@@ -400,12 +374,10 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			extractedPath := path.Join(r.VMStoragePath, removeCompressionExtension(imageName))
 			if extractedPath != finalImagePath {
 				logger.Info("Starting rename after extraction", "from", extractedPath, "to", finalImagePath)
-				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-					Type:    "ImagePhase",
-					Status:  metav1.ConditionFalse,
-					Reason:  "Renaming",
-					Message: fmt.Sprintf("phase=rename task_id=0 src=%s dst=%s", extractedPath, finalImagePath),
-				})
+				machine.Status.Phase = "rename"
+				machine.Status.TaskID = 0
+				machine.Status.RenameSrc = extractedPath
+				machine.Status.RenameDst = finalImagePath
 				if err := r.Status().Update(ctx, &machine); err != nil {
 					if !errors.IsConflict(err) {
 						logger.Error(err, "Failed to update status before rename")
@@ -415,12 +387,8 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 			}
 
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    "ImagePhase",
-				Status:  metav1.ConditionFalse,
-				Reason:  "Resizing",
-				Message: "phase=resize task_id=0",
-			})
+			machine.Status.Phase = "resize"
+			machine.Status.TaskID = 0
 			if err := r.Status().Update(ctx, &machine); err != nil {
 				if !errors.IsConflict(err) {
 					logger.Error(err, "Failed to update status before resize")
@@ -434,12 +402,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Type:    ReadyCondition,
 				Status:  metav1.ConditionFalse,
 				Reason:  "ProvisioningFailed",
-				Message: "Image extraction failed",
-			})
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    "ImagePhase",
-				Status:  metav1.ConditionFalse,
-				Reason:  "ExtractionFailed",
 				Message: "Image extraction failed",
 			})
 			if err := r.Status().Update(ctx, &machine); err != nil {
@@ -461,8 +423,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// 4. Copy phase (for non-compressed images)
 	// -----------------------
 	if phase == "copy" {
-		_, _ = fmt.Sscanf(phaseCond.Message, "phase=copy task_id=%d", &taskID)
-
 		if taskID == 0 {
 			// Copy file from download dir to VM storage directory
 			// Note: CopyFiles can only specify directory destination, not filename
@@ -474,12 +434,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 
 			logger.Info("Copy started", "taskID", fsTask.ID, "from", downloadPath, "to", r.VMStoragePath)
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    "ImagePhase",
-				Status:  metav1.ConditionFalse,
-				Reason:  "Copying",
-				Message: fmt.Sprintf("phase=copy task_id=%d", fsTask.ID),
-			})
+			machine.Status.TaskID = fsTask.ID
 			if err := r.Status().Update(ctx, &machine); err != nil {
 				if !errors.IsConflict(err) {
 					logger.Error(err, "Failed to update status after starting copy")
@@ -512,12 +467,10 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			copiedPath := path.Join(r.VMStoragePath, imageName)
 			if copiedPath != finalImagePath {
 				// Need to rename the copied file to the VM-named path
-				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-					Type:    "ImagePhase",
-					Status:  metav1.ConditionFalse,
-					Reason:  "Renaming",
-					Message: fmt.Sprintf("phase=rename task_id=0 src=%s dst=%s", copiedPath, finalImagePath),
-				})
+				machine.Status.Phase = "rename"
+				machine.Status.TaskID = 0
+				machine.Status.RenameSrc = copiedPath
+				machine.Status.RenameDst = finalImagePath
 				if err := r.Status().Update(ctx, &machine); err != nil {
 					if !errors.IsConflict(err) {
 						logger.Error(err, "Failed to update status before rename")
@@ -528,12 +481,8 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 
 			// If names already match (shouldn't happen), proceed to resize
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    "ImagePhase",
-				Status:  metav1.ConditionFalse,
-				Reason:  "Resizing",
-				Message: "phase=resize task_id=0",
-			})
+			machine.Status.Phase = "resize"
+			machine.Status.TaskID = 0
 			if err := r.Status().Update(ctx, &machine); err != nil {
 				if !errors.IsConflict(err) {
 					logger.Error(err, "Failed to update status before resize")
@@ -548,12 +497,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Type:    ReadyCondition,
 				Status:  metav1.ConditionFalse,
 				Reason:  "ProvisioningFailed",
-				Message: "Image copy failed",
-			})
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    "ImagePhase",
-				Status:  metav1.ConditionFalse,
-				Reason:  "CopyFailed",
 				Message: "Image copy failed",
 			})
 			if err := r.Status().Update(ctx, &machine); err != nil {
@@ -574,16 +517,8 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// 5. Rename to VM name
 	// -----------------------
 	if phase == "rename" {
-		var srcPath, dstPath string
-		// Parse the message to extract task_id, src, and dst
-		// Use regex to handle paths with spaces
-		re := regexp.MustCompile(`task_id=(\d+) src=(.+) dst=(.+)`)
-		matches := re.FindStringSubmatch(phaseCond.Message)
-		if len(matches) == 4 {
-			_, _ = fmt.Sscanf(matches[1], "%d", &taskID)
-			srcPath = matches[2]
-			dstPath = matches[3]
-		}
+		srcPath := machine.Status.RenameSrc
+		dstPath := machine.Status.RenameDst
 
 		if taskID == 0 {
 			// Start the rename operation using MoveFiles
@@ -594,12 +529,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 
 			logger.Info("Rename task started", "taskID", mvTask.ID, "from", srcPath, "to", dstPath)
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    "ImagePhase",
-				Status:  metav1.ConditionFalse,
-				Reason:  "Renaming",
-				Message: fmt.Sprintf("phase=rename task_id=%d src=%s dst=%s", mvTask.ID, srcPath, dstPath),
-			})
+			machine.Status.TaskID = mvTask.ID
 			if err := r.Status().Update(ctx, &machine); err != nil {
 				if !errors.IsConflict(err) {
 					logger.Error(err, "Failed to update status after starting rename")
@@ -618,12 +548,10 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		switch fsTask.State {
 		case taskStateDone:
 			logger.Info("Rename completed", "taskID", taskID)
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    "ImagePhase",
-				Status:  metav1.ConditionFalse,
-				Reason:  "Resizing",
-				Message: "phase=resize task_id=0",
-			})
+			machine.Status.Phase = "resize"
+			machine.Status.TaskID = 0
+			machine.Status.RenameSrc = ""
+			machine.Status.RenameDst = ""
 			if err := r.Status().Update(ctx, &machine); err != nil {
 				if !errors.IsConflict(err) {
 					logger.Error(err, "Failed to update status after rename")
@@ -637,12 +565,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Type:    ReadyCondition,
 				Status:  metav1.ConditionFalse,
 				Reason:  "ProvisioningFailed",
-				Message: fmt.Sprintf("Image rename failed: %s", fsTask.Error),
-			})
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    "ImagePhase",
-				Status:  metav1.ConditionFalse,
-				Reason:  "RenameFailed",
 				Message: fmt.Sprintf("Image rename failed: %s", fsTask.Error),
 			})
 			if err := r.Status().Update(ctx, &machine); err != nil {
@@ -664,8 +586,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// 6. Resize disk
 	// -----------------------
 	if phase == "resize" {
-		_, _ = fmt.Sscanf(phaseCond.Message, "phase=resize task_id=%d", &taskID)
-
 		if taskID == 0 {
 			resizePayload := freeboxTypes.VirtualDisksResizePayload{
 				DiskPath:    freeboxTypes.Base64Path(finalImagePath),
@@ -680,12 +600,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 
 			logger.Info("Resize task started", "taskID", newTaskID)
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    "ImagePhase",
-				Status:  metav1.ConditionFalse,
-				Reason:  "Resizing",
-				Message: fmt.Sprintf("phase=resize task_id=%d", newTaskID),
-			})
+			machine.Status.TaskID = newTaskID
 			if err := r.Status().Update(ctx, &machine); err != nil {
 				if !errors.IsConflict(err) {
 					logger.Error(err, "Failed to update status after starting resize")
@@ -705,9 +620,9 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			if resizeTask.Error {
 				logger.Error(fmt.Errorf("resize failed"), "Disk resize failed")
 				meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-					Type:    "ImagePhase",
+					Type:    ReadyCondition,
 					Status:  metav1.ConditionFalse,
-					Reason:  "ResizeFailed",
+					Reason:  "ProvisioningFailed",
 					Message: "Disk resize failed",
 				})
 				if err := r.Status().Update(ctx, &machine); err != nil {
@@ -721,9 +636,13 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 			logger.Info("Disk resize completed", "taskID", taskID)
 
-			// Image is now ready (downloaded, extracted/copied, renamed, and resized)
+			// Image is now ready (downloaded, extracted/copied, renamed, and resized).
+			// Note: Phase is NOT set to "done" here — it is only set after VM creation
+			// and IP assignment complete. Setting it here would break the IP polling
+			// requeue loop: subsequent reconciles would see Phase="done", fall through
+			// all phase checks, and return ctrl.Result{} without requeueing.
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    "ImageReady",
+				Type:    ConditionImageReady,
 				Status:  metav1.ConditionTrue,
 				Reason:  "ImageReady",
 				Message: "Image downloaded, extracted, renamed, and resized",
@@ -786,6 +705,9 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						if len(addresses) > 0 {
 							machine.Status.Addresses = addresses
 							logger.Info("Found IP address for existing VM", "vmID", *machine.Status.VMID, "mac", vm.Mac, "addresses", addresses)
+
+							// Full provisioning complete — mark phase done
+							machine.Status.Phase = "done"
 
 							// Set initialization.provisioned and Ready condition
 							machine.Status.Initialization.Provisioned = ptr.To(true)
@@ -993,6 +915,9 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}
 			}
 
+			// Full provisioning complete — mark phase done
+			machine.Status.Phase = "done"
+
 			// Set initialization.provisioned to true - this signals to CAPI that the machine is ready
 			machine.Status.Initialization.Provisioned = ptr.To(true)
 
@@ -1002,13 +927,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Status:  metav1.ConditionTrue,
 				Reason:  "InfrastructureReady",
 				Message: "Freebox machine infrastructure is fully provisioned",
-			})
-			// Set supplementary ImagePhase condition to mark completion
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    "ImagePhase",
-				Status:  metav1.ConditionTrue,
-				Reason:  "Completed",
-				Message: "phase=done",
 			})
 			if err := r.Status().Update(ctx, &machine); err != nil {
 				// Ignore conflict errors - another reconcile already updated the object

@@ -1,0 +1,621 @@
+/*
+Copyright 2025.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"io"
+
+	freeboxclient "github.com/nikolalohinski/free-go/client"
+	freeboxTypes "github.com/nikolalohinski/free-go/types"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
+)
+
+// fakeClient is a minimal fake implementation of freeboxclient.Client for phase-transition tests.
+// Only the methods exercised by the reconciler's image-phase logic are implemented;
+// all others panic to surface unexpected calls during testing.
+type fakeClient struct {
+	listDownloadTasksFn  func(ctx context.Context) ([]freeboxTypes.DownloadTask, error)
+	addDownloadTaskFn    func(ctx context.Context, req freeboxTypes.DownloadRequest) (int64, error)
+	getDownloadTaskFn    func(ctx context.Context, id int64) (freeboxTypes.DownloadTask, error)
+	deleteDownloadTaskFn func(ctx context.Context, id int64) error
+	extractFileFn        func(ctx context.Context, p freeboxTypes.ExtractFilePayload) (freeboxTypes.FileSystemTask, error)
+	copyFilesFn          func(ctx context.Context, srcs []string, dst string, mode freeboxTypes.FileCopyMode) (freeboxTypes.FileSystemTask, error)
+	moveFilesFn          func(ctx context.Context, srcs []string, dst string, mode freeboxTypes.FileMoveMode) (freeboxTypes.FileSystemTask, error)
+	getFileSystemTaskFn  func(ctx context.Context, id int64) (freeboxTypes.FileSystemTask, error)
+	removeFilesFn        func(ctx context.Context, paths []string) (freeboxTypes.FileSystemTask, error)
+	resizeVirtualDiskFn  func(ctx context.Context, p freeboxTypes.VirtualDisksResizePayload) (int64, error)
+	getVirtualDiskTaskFn func(ctx context.Context, id int64) (freeboxTypes.VirtualMachineDiskTask, error)
+}
+
+func (f *fakeClient) ListDownloadTasks(ctx context.Context) ([]freeboxTypes.DownloadTask, error) {
+	if f.listDownloadTasksFn != nil {
+		return f.listDownloadTasksFn(ctx)
+	}
+	return nil, nil
+}
+func (f *fakeClient) AddDownloadTask(ctx context.Context, req freeboxTypes.DownloadRequest) (int64, error) {
+	if f.addDownloadTaskFn != nil {
+		return f.addDownloadTaskFn(ctx, req)
+	}
+	panic("AddDownloadTask not expected")
+}
+func (f *fakeClient) GetDownloadTask(ctx context.Context, id int64) (freeboxTypes.DownloadTask, error) {
+	if f.getDownloadTaskFn != nil {
+		return f.getDownloadTaskFn(ctx, id)
+	}
+	panic("GetDownloadTask not expected")
+}
+func (f *fakeClient) DeleteDownloadTask(ctx context.Context, id int64) error {
+	if f.deleteDownloadTaskFn != nil {
+		return f.deleteDownloadTaskFn(ctx, id)
+	}
+	return nil
+}
+func (f *fakeClient) ExtractFile(ctx context.Context, p freeboxTypes.ExtractFilePayload) (freeboxTypes.FileSystemTask, error) {
+	if f.extractFileFn != nil {
+		return f.extractFileFn(ctx, p)
+	}
+	panic("ExtractFile not expected")
+}
+func (f *fakeClient) CopyFiles(ctx context.Context, srcs []string, dst string, mode freeboxTypes.FileCopyMode) (freeboxTypes.FileSystemTask, error) {
+	if f.copyFilesFn != nil {
+		return f.copyFilesFn(ctx, srcs, dst, mode)
+	}
+	panic("CopyFiles not expected")
+}
+func (f *fakeClient) MoveFiles(ctx context.Context, srcs []string, dst string, mode freeboxTypes.FileMoveMode) (freeboxTypes.FileSystemTask, error) {
+	if f.moveFilesFn != nil {
+		return f.moveFilesFn(ctx, srcs, dst, mode)
+	}
+	panic("MoveFiles not expected")
+}
+func (f *fakeClient) GetFileSystemTask(ctx context.Context, id int64) (freeboxTypes.FileSystemTask, error) {
+	if f.getFileSystemTaskFn != nil {
+		return f.getFileSystemTaskFn(ctx, id)
+	}
+	panic("GetFileSystemTask not expected")
+}
+func (f *fakeClient) RemoveFiles(ctx context.Context, paths []string) (freeboxTypes.FileSystemTask, error) {
+	if f.removeFilesFn != nil {
+		return f.removeFilesFn(ctx, paths)
+	}
+	return freeboxTypes.FileSystemTask{}, nil
+}
+func (f *fakeClient) ResizeVirtualDisk(ctx context.Context, p freeboxTypes.VirtualDisksResizePayload) (int64, error) {
+	if f.resizeVirtualDiskFn != nil {
+		return f.resizeVirtualDiskFn(ctx, p)
+	}
+	panic("ResizeVirtualDisk not expected")
+}
+func (f *fakeClient) GetVirtualDiskTask(ctx context.Context, id int64) (freeboxTypes.VirtualMachineDiskTask, error) {
+	if f.getVirtualDiskTaskFn != nil {
+		return f.getVirtualDiskTaskFn(ctx, id)
+	}
+	panic("GetVirtualDiskTask not expected")
+}
+
+// Unused interface methods — panic on unexpected calls.
+func (f *fakeClient) WithAppID(string) freeboxclient.Client { panic("not implemented") }
+func (f *fakeClient) WithPrivateToken(freeboxTypes.PrivateToken) freeboxclient.Client {
+	panic("not implemented")
+}
+func (f *fakeClient) WithHTTPClient(freeboxclient.HTTPClient) freeboxclient.Client {
+	panic("not implemented")
+}
+func (f *fakeClient) APIVersion(context.Context) (freeboxTypes.APIVersion, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) Authorize(context.Context, freeboxTypes.AuthorizationRequest) (freeboxTypes.PrivateToken, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) Login(context.Context) (freeboxTypes.Permissions, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) Logout(context.Context) error { panic("not implemented") }
+func (f *fakeClient) ListPortForwardingRules(context.Context) ([]freeboxTypes.PortForwardingRule, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetPortForwardingRule(ctx context.Context, identifier int64) (freeboxTypes.PortForwardingRule, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) CreatePortForwardingRule(ctx context.Context, payload freeboxTypes.PortForwardingRulePayload) (freeboxTypes.PortForwardingRule, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) UpdatePortForwardingRule(ctx context.Context, identifier int64, payload freeboxTypes.PortForwardingRulePayload) (freeboxTypes.PortForwardingRule, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) DeletePortForwardingRule(ctx context.Context, identifier int64) error {
+	panic("not implemented")
+}
+func (f *fakeClient) ListDHCPStaticLease(context.Context) ([]freeboxTypes.DHCPStaticLeaseInfo, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetDHCPStaticLease(ctx context.Context, identifier string) (freeboxTypes.DHCPStaticLeaseInfo, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) UpdateDHCPStaticLease(ctx context.Context, identifier string, payload freeboxTypes.DHCPStaticLeasePayload) (freeboxTypes.LanInterfaceHost, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) CreateDHCPStaticLease(ctx context.Context, payload freeboxTypes.DHCPStaticLeasePayload) (freeboxTypes.LanInterfaceHost, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) DeleteDHCPStaticLease(ctx context.Context, identifier string) error {
+	panic("not implemented")
+}
+func (f *fakeClient) GetLanConfig(ctx context.Context) (freeboxTypes.LanConfig, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) UpdateLanConfig(ctx context.Context, payload freeboxTypes.LanConfig) (freeboxTypes.LanConfig, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) ListLanInterfaceInfo(context.Context) ([]freeboxTypes.LanInfo, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetLanInterface(ctx context.Context, name string) ([]freeboxTypes.LanInterfaceHost, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetLanInterfaceHost(ctx context.Context, interfaceName, identifier string) (freeboxTypes.LanInterfaceHost, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetVirtualMachineInfo(context.Context) (freeboxTypes.VirtualMachinesInfo, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetVirtualMachineDistributions(context.Context) ([]freeboxTypes.VirtualMachineDistribution, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) ListVirtualMachines(context.Context) ([]freeboxTypes.VirtualMachine, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) CreateVirtualMachine(ctx context.Context, payload freeboxTypes.VirtualMachinePayload) (freeboxTypes.VirtualMachine, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetVirtualMachine(ctx context.Context, identifier int64) (freeboxTypes.VirtualMachine, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) UpdateVirtualMachine(ctx context.Context, identifier int64, payload freeboxTypes.VirtualMachinePayload) (freeboxTypes.VirtualMachine, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) DeleteVirtualMachine(ctx context.Context, identifier int64) error {
+	panic("not implemented")
+}
+func (f *fakeClient) StartVirtualMachine(ctx context.Context, identifier int64) error {
+	panic("not implemented")
+}
+func (f *fakeClient) KillVirtualMachine(ctx context.Context, identifier int64) error {
+	panic("not implemented")
+}
+func (f *fakeClient) StopVirtualMachine(ctx context.Context, identifier int64) error {
+	panic("not implemented")
+}
+func (f *fakeClient) GetVirtualDiskInfo(ctx context.Context, path string) (freeboxTypes.VirtualDiskInfo, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) CreateVirtualDisk(ctx context.Context, payload freeboxTypes.VirtualDisksCreatePayload) (int64, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) DeleteVirtualDiskTask(ctx context.Context, identifier int64) error {
+	panic("not implemented")
+}
+func (f *fakeClient) ListenEvents(ctx context.Context, events []freeboxTypes.EventDescription) (chan freeboxTypes.Event, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetFileInfo(ctx context.Context, path string) (freeboxTypes.FileInfo, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) UpdateFileSystemTask(ctx context.Context, identifier int64, payload freeboxTypes.FileSytemTaskUpdate) (freeboxTypes.FileSystemTask, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) ListFileSystemTasks(ctx context.Context) ([]freeboxTypes.FileSystemTask, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) DeleteFileSystemTask(ctx context.Context, identifier int64) error {
+	panic("not implemented")
+}
+func (f *fakeClient) CreateDirectory(ctx context.Context, parent, name string) (string, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) AddHashFileTask(ctx context.Context, payload freeboxTypes.HashPayload) (freeboxTypes.FileSystemTask, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetHashResult(ctx context.Context, identifier int64) (string, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetFile(ctx context.Context, path string) (freeboxTypes.File, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) EraseDownloadTask(ctx context.Context, identifier int64) error {
+	panic("not implemented")
+}
+func (f *fakeClient) UpdateDownloadTask(ctx context.Context, identifier int64, payload freeboxTypes.DownloadTaskUpdate) error {
+	panic("not implemented")
+}
+func (f *fakeClient) FileUploadStart(ctx context.Context, input freeboxTypes.FileUploadStartActionInput) (io.WriteCloser, int64, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetUploadTask(ctx context.Context, identifier int64) (freeboxTypes.UploadTask, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) ListUploadTasks(ctx context.Context) ([]freeboxTypes.UploadTask, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) CancelUploadTask(ctx context.Context, identifier int64) error {
+	panic("not implemented")
+}
+func (f *fakeClient) DeleteUploadTask(ctx context.Context, identifier int64) error {
+	panic("not implemented")
+}
+func (f *fakeClient) CleanUploadTasks(ctx context.Context) error { panic("not implemented") }
+
+// newMachineForPhaseTest creates a FreeboxMachine with the given name in the default namespace.
+func newMachineForPhaseTest(name string, spec infrastructurev1alpha1.FreeboxMachineSpec) *infrastructurev1alpha1.FreeboxMachine {
+	return &infrastructurev1alpha1.FreeboxMachine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+		},
+		Spec: spec,
+	}
+}
+
+var _ = Describe("FreeboxMachine phase transitions", func() {
+	const (
+		downloadDir   = "/mnt/downloads"
+		vmStoragePath = "/mnt/VMs"
+		imageURL      = "https://example.com/images/nocloud.raw.xz"
+		imageName     = "nocloud.raw.xz"
+		downloadPath  = "/mnt/downloads/nocloud.raw.xz"
+		extractedBase = "nocloud.raw"
+	)
+
+	testCtx := context.Background()
+
+	newReconciler := func(fc *fakeClient) *FreeboxMachineReconciler {
+		return &FreeboxMachineReconciler{
+			Client:             k8sClient,
+			Scheme:             k8sClient.Scheme(),
+			FreeboxClient:      fc,
+			FreeboxDownloadDir: downloadDir,
+			VMStoragePath:      vmStoragePath,
+		}
+	}
+
+	Describe("TestPhaseDownload", func() {
+		const resourceName = "phase-download-test"
+		nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			machine := newMachineForPhaseTest(resourceName, infrastructurev1alpha1.FreeboxMachineSpec{
+				Name:          "test-vm",
+				VCPUs:         1,
+				MemoryMB:      512,
+				DiskSizeBytes: 10 * 1024 * 1024 * 1024,
+				ImageURL:      imageURL,
+			})
+			Expect(k8sClient.Create(testCtx, machine)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			machine := &infrastructurev1alpha1.FreeboxMachine{}
+			_ = k8sClient.Get(testCtx, nn, machine)
+			_ = k8sClient.Delete(testCtx, machine)
+		})
+
+		It("reconcile with empty phase starts download and sets Phase=download", func() {
+			fc := &fakeClient{
+				listDownloadTasksFn: func(ctx context.Context) ([]freeboxTypes.DownloadTask, error) {
+					return nil, nil // No existing tasks
+				},
+				addDownloadTaskFn: func(ctx context.Context, req freeboxTypes.DownloadRequest) (int64, error) {
+					return 42, nil
+				},
+			}
+			r := newReconciler(fc)
+			result, err := r.Reconcile(testCtx, reconcile.Request{NamespacedName: nn})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).NotTo(BeZero())
+
+			updated := &infrastructurev1alpha1.FreeboxMachine{}
+			Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal("download"))
+			Expect(updated.Status.TaskID).To(Equal(int64(42)))
+		})
+	})
+
+	Describe("TestPhaseExtract", func() {
+		const resourceName = "phase-extract-test"
+		nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			machine := newMachineForPhaseTest(resourceName, infrastructurev1alpha1.FreeboxMachineSpec{
+				Name:          "my-vm",
+				VCPUs:         1,
+				MemoryMB:      512,
+				DiskSizeBytes: 10 * 1024 * 1024 * 1024,
+				ImageURL:      imageURL,
+			})
+			Expect(k8sClient.Create(testCtx, machine)).To(Succeed())
+			// Simulate download just completed: set phase=download, task done -> will transition to extract
+			machine.Status.Phase = "download"
+			machine.Status.TaskID = 99
+			Expect(k8sClient.Status().Update(testCtx, machine)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			machine := &infrastructurev1alpha1.FreeboxMachine{}
+			_ = k8sClient.Get(testCtx, nn, machine)
+			_ = k8sClient.Delete(testCtx, machine)
+		})
+
+		It("when download task is done, transitions to extract phase with taskID=0", func() {
+			fc := &fakeClient{
+				getDownloadTaskFn: func(ctx context.Context, id int64) (freeboxTypes.DownloadTask, error) {
+					Expect(id).To(Equal(int64(99)))
+					return freeboxTypes.DownloadTask{Status: freeboxTypes.DownloadTaskStatusDone}, nil
+				},
+			}
+			r := newReconciler(fc)
+			result, err := r.Reconcile(testCtx, reconcile.Request{NamespacedName: nn})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).NotTo(BeZero())
+
+			updated := &infrastructurev1alpha1.FreeboxMachine{}
+			Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal("extract"))
+			Expect(updated.Status.TaskID).To(Equal(int64(0)))
+		})
+	})
+
+	Describe("TestPhaseCopy", func() {
+		const resourceName = "phase-copy-test"
+		// Use an uncompressed image so the copy path is exercised
+		const uncompressedURL = "https://example.com/images/nocloud.raw"
+		nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			machine := newMachineForPhaseTest(resourceName, infrastructurev1alpha1.FreeboxMachineSpec{
+				Name:          "my-vm",
+				VCPUs:         1,
+				MemoryMB:      512,
+				DiskSizeBytes: 10 * 1024 * 1024 * 1024,
+				ImageURL:      uncompressedURL,
+			})
+			Expect(k8sClient.Create(testCtx, machine)).To(Succeed())
+			machine.Status.Phase = "download"
+			machine.Status.TaskID = 77
+			Expect(k8sClient.Status().Update(testCtx, machine)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			machine := &infrastructurev1alpha1.FreeboxMachine{}
+			_ = k8sClient.Get(testCtx, nn, machine)
+			_ = k8sClient.Delete(testCtx, machine)
+		})
+
+		It("when download task done for uncompressed image, transitions to copy phase", func() {
+			fc := &fakeClient{
+				getDownloadTaskFn: func(ctx context.Context, id int64) (freeboxTypes.DownloadTask, error) {
+					return freeboxTypes.DownloadTask{Status: freeboxTypes.DownloadTaskStatusDone}, nil
+				},
+			}
+			r := newReconciler(fc)
+			result, err := r.Reconcile(testCtx, reconcile.Request{NamespacedName: nn})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).NotTo(BeZero())
+
+			updated := &infrastructurev1alpha1.FreeboxMachine{}
+			Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal("copy"))
+			Expect(updated.Status.TaskID).To(Equal(int64(0)))
+		})
+	})
+
+	Describe("TestPhaseRename", func() {
+		const resourceName = "phase-rename-test"
+		nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			machine := newMachineForPhaseTest(resourceName, infrastructurev1alpha1.FreeboxMachineSpec{
+				Name:          "my-vm",
+				VCPUs:         1,
+				MemoryMB:      512,
+				DiskSizeBytes: 10 * 1024 * 1024 * 1024,
+				ImageURL:      imageURL,
+			})
+			Expect(k8sClient.Create(testCtx, machine)).To(Succeed())
+			// Simulate extract done -> rename pending
+			machine.Status.Phase = "rename"
+			machine.Status.TaskID = 0
+			machine.Status.RenameSrc = vmStoragePath + "/" + extractedBase
+			machine.Status.RenameDst = vmStoragePath + "/my-vm.raw"
+			Expect(k8sClient.Status().Update(testCtx, machine)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			machine := &infrastructurev1alpha1.FreeboxMachine{}
+			_ = k8sClient.Get(testCtx, nn, machine)
+			_ = k8sClient.Delete(testCtx, machine)
+		})
+
+		It("when rename task started and done, transitions to resize phase", func() {
+			callCount := 0
+			fc := &fakeClient{
+				moveFilesFn: func(ctx context.Context, srcs []string, dst string, mode freeboxTypes.FileMoveMode) (freeboxTypes.FileSystemTask, error) {
+					Expect(srcs).To(ConsistOf(vmStoragePath + "/" + extractedBase))
+					Expect(dst).To(Equal(vmStoragePath + "/my-vm.raw"))
+					callCount++
+					return freeboxTypes.FileSystemTask{ID: 55}, nil
+				},
+			}
+			r := newReconciler(fc)
+
+			// First reconcile: starts the rename task
+			result, err := r.Reconcile(testCtx, reconcile.Request{NamespacedName: nn})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).NotTo(BeZero())
+			Expect(callCount).To(Equal(1))
+
+			updated := &infrastructurev1alpha1.FreeboxMachine{}
+			Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
+			Expect(updated.Status.TaskID).To(Equal(int64(55)))
+
+			// Second reconcile: task is done → transition to resize
+			fc.moveFilesFn = nil
+			fc.getFileSystemTaskFn = func(ctx context.Context, id int64) (freeboxTypes.FileSystemTask, error) {
+				Expect(id).To(Equal(int64(55)))
+				return freeboxTypes.FileSystemTask{State: taskStateDone}, nil
+			}
+			result, err = r.Reconcile(testCtx, reconcile.Request{NamespacedName: nn})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).NotTo(BeZero())
+
+			Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal("resize"))
+			Expect(updated.Status.TaskID).To(Equal(int64(0)))
+			Expect(updated.Status.RenameSrc).To(BeEmpty())
+			Expect(updated.Status.RenameDst).To(BeEmpty())
+		})
+	})
+
+	Describe("TestPhaseResize", func() {
+		const resourceName = "phase-resize-test"
+		nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			machine := newMachineForPhaseTest(resourceName, infrastructurev1alpha1.FreeboxMachineSpec{
+				Name:          "my-vm",
+				VCPUs:         1,
+				MemoryMB:      512,
+				DiskSizeBytes: 20 * 1024 * 1024 * 1024,
+				ImageURL:      imageURL,
+			})
+			Expect(k8sClient.Create(testCtx, machine)).To(Succeed())
+			machine.Status.Phase = "resize"
+			machine.Status.TaskID = 0
+			Expect(k8sClient.Status().Update(testCtx, machine)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			machine := &infrastructurev1alpha1.FreeboxMachine{}
+			_ = k8sClient.Get(testCtx, nn, machine)
+			_ = k8sClient.Delete(testCtx, machine)
+		})
+
+		It("when resize task started and done, sets ImageReady condition (Phase stays resize until fully provisioned)", func() {
+			callCount := 0
+			fc := &fakeClient{
+				resizeVirtualDiskFn: func(ctx context.Context, p freeboxTypes.VirtualDisksResizePayload) (int64, error) {
+					callCount++
+					return 88, nil
+				},
+			}
+			r := newReconciler(fc)
+
+			// First reconcile: starts resize task
+			result, err := r.Reconcile(testCtx, reconcile.Request{NamespacedName: nn})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).NotTo(BeZero())
+			Expect(callCount).To(Equal(1))
+
+			updated := &infrastructurev1alpha1.FreeboxMachine{}
+			Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
+			Expect(updated.Status.TaskID).To(Equal(int64(88)))
+
+			// Second reconcile: task done → ImageReady condition set, Phase stays "resize"
+			fc.resizeVirtualDiskFn = nil
+			fc.getVirtualDiskTaskFn = func(ctx context.Context, id int64) (freeboxTypes.VirtualMachineDiskTask, error) {
+				Expect(id).To(Equal(int64(88)))
+				return freeboxTypes.VirtualMachineDiskTask{Done: true, Error: false}, nil
+			}
+			// The reconciler proceeds to VM creation after resize; since there is no CAPI
+			// Machine owner it returns early. We verify ImageReady is set but Phase is NOT
+			// prematurely "done" — that would break the IP-polling requeue loop.
+			fc.listDownloadTasksFn = nil // not called in this path
+			_, err = r.Reconcile(testCtx, reconcile.Request{NamespacedName: nn})
+
+			Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
+			// Phase must remain "resize" until VM creation + IP assignment are complete.
+			Expect(updated.Status.Phase).To(Equal("resize"))
+
+			var imageReadyCond *metav1.Condition
+			for i := range updated.Status.Conditions {
+				if updated.Status.Conditions[i].Type == ConditionImageReady {
+					imageReadyCond = &updated.Status.Conditions[i]
+					break
+				}
+			}
+			Expect(imageReadyCond).NotTo(BeNil())
+			Expect(imageReadyCond.Status).To(Equal(metav1.ConditionTrue))
+		})
+	})
+
+	Describe("TestPhaseError", func() {
+		const resourceName = "phase-error-test"
+		nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			machine := newMachineForPhaseTest(resourceName, infrastructurev1alpha1.FreeboxMachineSpec{
+				Name:          "my-vm",
+				VCPUs:         1,
+				MemoryMB:      512,
+				DiskSizeBytes: 10 * 1024 * 1024 * 1024,
+				ImageURL:      imageURL,
+			})
+			Expect(k8sClient.Create(testCtx, machine)).To(Succeed())
+			machine.Status.Phase = "download"
+			machine.Status.TaskID = 111
+			Expect(k8sClient.Status().Update(testCtx, machine)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			machine := &infrastructurev1alpha1.FreeboxMachine{}
+			_ = k8sClient.Get(testCtx, nn, machine)
+			_ = k8sClient.Delete(testCtx, machine)
+		})
+
+		It("when download task fails, sets ProvisioningFailed condition and returns error", func() {
+			fc := &fakeClient{
+				getDownloadTaskFn: func(ctx context.Context, id int64) (freeboxTypes.DownloadTask, error) {
+					return freeboxTypes.DownloadTask{Status: freeboxTypes.DownloadTaskStatusError}, nil
+				},
+			}
+			r := newReconciler(fc)
+			_, err := r.Reconcile(testCtx, reconcile.Request{NamespacedName: nn})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("download failed"))
+
+			updated := &infrastructurev1alpha1.FreeboxMachine{}
+			Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
+
+			var readyCond *metav1.Condition
+			for i := range updated.Status.Conditions {
+				if updated.Status.Conditions[i].Type == ReadyCondition {
+					readyCond = &updated.Status.Conditions[i]
+					break
+				}
+			}
+			Expect(readyCond).NotTo(BeNil())
+			Expect(readyCond.Reason).To(Equal("ProvisioningFailed"))
+		})
+	})
+})

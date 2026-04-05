@@ -212,6 +212,23 @@ spec:
                       NOTE: this field is part of the Cluster API contract, and it is used to orchestrate initial Machine provisioning.
                     type: boolean
                 type: object
+              phase:
+                description: |-
+                  Phase tracks the current image-preparation stage:
+                  "download", "extract", "copy", "rename", "resize", or "done".
+                type: string
+              renameDst:
+                description: RenameDst is the destination path for the rename step.
+                type: string
+              renameSrc:
+                description: RenameSrc is the source path for the rename step.
+                type: string
+              taskID:
+                description: |-
+                  TaskID holds the Freebox async task ID for the current phase.
+                  Zero means no task has been started yet for the current phase.
+                format: int64
+                type: integer
               vmID:
                 description: |-
                   VMID stores the ID of the created Freebox virtual machine

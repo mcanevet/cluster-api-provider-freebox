@@ -81,6 +81,24 @@ type FreeboxMachineStatus struct {
 	// Addresses contains the associated addresses for the machine.
 	// +optional
 	Addresses []clusterv1.MachineAddress `json:"addresses,omitempty"`
+
+	// Phase tracks the current image-preparation stage:
+	// "download", "extract", "copy", "rename", "resize", or "done".
+	// +optional
+	Phase string `json:"phase,omitempty"`
+
+	// TaskID holds the Freebox async task ID for the current phase.
+	// Zero means no task has been started yet for the current phase.
+	// +optional
+	TaskID int64 `json:"taskID,omitempty"`
+
+	// RenameSrc is the source path for the rename step.
+	// +optional
+	RenameSrc string `json:"renameSrc,omitempty"`
+
+	// RenameDst is the destination path for the rename step.
+	// +optional
+	RenameDst string `json:"renameDst,omitempty"`
 }
 
 // FreeboxMachineInitializationStatus provides observations of the FreeboxMachine initialization process.
