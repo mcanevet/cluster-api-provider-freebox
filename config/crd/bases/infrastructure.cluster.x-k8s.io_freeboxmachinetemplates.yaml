@@ -74,7 +74,7 @@ spec:
                         description: |-
                           providerID must match the provider ID as seen on the node object corresponding to this machine.
                           For Kubernetes Nodes running on the Freebox provider, this value is set by the corresponding CPI component
-                          and it has the format freebox:////<vm-name>.
+                          and it has the format freebox://<vm-id> (e.g. freebox://42).
                         maxLength: 512
                         minLength: 1
                         type: string

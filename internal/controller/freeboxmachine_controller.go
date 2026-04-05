@@ -56,6 +56,14 @@ const (
 	// Task states
 	taskStateDone  = "done"
 	taskStateError = "error"
+
+	// Phase tracks the image-preparation pipeline
+	phaseDownload = "download"
+	phaseExtract  = "extract"
+	phaseCopy     = "copy"
+	phaseRename   = "rename"
+	phaseResize   = "resize"
+	phaseDone     = "done"
 )
 
 // FreeboxMachineReconciler reconciles a FreeboxMachine object
@@ -250,7 +258,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			Reason:  "Provisioning",
 			Message: "Downloading and preparing disk image",
 		})
-		machine.Status.Phase = "download"
+		machine.Status.Phase = phaseDownload
 		machine.Status.TaskID = newTaskID
 		if err := r.Status().Update(ctx, &machine); err != nil {
 			if !errors.IsConflict(err) {
@@ -265,7 +273,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// -----------------------
 	// 2. Wait for download
 	// -----------------------
-	if phase == "download" {
+	if phase == phaseDownload {
 		downloadTask, err := r.FreeboxClient.GetDownloadTask(ctx, taskID)
 		if err != nil {
 			logger.Error(err, "Failed to get download task status")
@@ -285,11 +293,11 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 			if isCompressedFile(imageName) {
 				// Extract from download dir to VM storage
-				machine.Status.Phase = "extract"
+				machine.Status.Phase = phaseExtract
 				machine.Status.TaskID = 0
 			} else {
 				// Copy from download dir to VM storage
-				machine.Status.Phase = "copy"
+				machine.Status.Phase = phaseCopy
 				machine.Status.TaskID = 0
 			}
 			if err := r.Status().Update(ctx, &machine); err != nil {
@@ -324,7 +332,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// -----------------------
 	// 3. Extraction phase
 	// -----------------------
-	if phase == "extract" {
+	if phase == phaseExtract {
 		if taskID == 0 {
 			fsPayload := freeboxTypes.ExtractFilePayload{
 				Src: freeboxTypes.Base64Path(downloadPath),
@@ -371,7 +379,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			extractedPath := path.Join(r.VMStoragePath, stripCompressionSuffix(imageName))
 			if extractedPath != finalImagePath {
 				logger.Info("Starting rename after extraction", "from", extractedPath, "to", finalImagePath)
-				machine.Status.Phase = "rename"
+				machine.Status.Phase = phaseRename
 				machine.Status.TaskID = 0
 				machine.Status.RenameSrc = extractedPath
 				machine.Status.RenameDst = finalImagePath
@@ -384,7 +392,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 			}
 
-			machine.Status.Phase = "resize"
+			machine.Status.Phase = phaseResize
 			machine.Status.TaskID = 0
 			if err := r.Status().Update(ctx, &machine); err != nil {
 				if !errors.IsConflict(err) {
@@ -419,7 +427,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// -----------------------
 	// 4. Copy phase (for non-compressed images)
 	// -----------------------
-	if phase == "copy" {
+	if phase == phaseCopy {
 		if taskID == 0 {
 			// Copy file from download dir to VM storage directory
 			// Note: CopyFiles can only specify directory destination, not filename
@@ -464,7 +472,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			copiedPath := path.Join(r.VMStoragePath, imageName)
 			if copiedPath != finalImagePath {
 				// Need to rename the copied file to the VM-named path
-				machine.Status.Phase = "rename"
+				machine.Status.Phase = phaseRename
 				machine.Status.TaskID = 0
 				machine.Status.RenameSrc = copiedPath
 				machine.Status.RenameDst = finalImagePath
@@ -478,7 +486,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 
 			// If names already match (shouldn't happen), proceed to resize
-			machine.Status.Phase = "resize"
+			machine.Status.Phase = phaseResize
 			machine.Status.TaskID = 0
 			if err := r.Status().Update(ctx, &machine); err != nil {
 				if !errors.IsConflict(err) {
@@ -513,7 +521,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// -----------------------
 	// 5. Rename to VM name
 	// -----------------------
-	if phase == "rename" {
+	if phase == phaseRename {
 		srcPath := machine.Status.RenameSrc
 		dstPath := machine.Status.RenameDst
 
@@ -545,7 +553,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		switch fsTask.State {
 		case taskStateDone:
 			logger.Info("Rename completed", "taskID", taskID)
-			machine.Status.Phase = "resize"
+			machine.Status.Phase = phaseResize
 			machine.Status.TaskID = 0
 			machine.Status.RenameSrc = ""
 			machine.Status.RenameDst = ""
@@ -582,7 +590,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// -----------------------
 	// 6. Resize disk
 	// -----------------------
-	if phase == "resize" {
+	if phase == phaseResize {
 		if taskID == 0 {
 			resizePayload := freeboxTypes.VirtualDisksResizePayload{
 				DiskPath:    freeboxTypes.Base64Path(finalImagePath),
@@ -636,7 +644,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			// Image is now ready (downloaded, extracted/copied, renamed, and resized).
 			// Note: Phase is NOT set to "done" here — it is only set after VM creation
 			// and IP assignment complete. Setting it here would break the IP polling
-			// requeue loop: subsequent reconciles would see Phase="done", fall through
+			// requeue loop: subsequent reconciles would see Phase=phaseDone, fall through
 			// all phase checks, and return ctrl.Result{} without requeueing.
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    ConditionImageReady,
@@ -703,7 +711,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 							logger.Info("Found IP address for existing VM", "vmID", *machine.Status.VMID, "mac", vm.Mac, "addresses", addresses)
 
 							// Full provisioning complete — mark phase done
-							machine.Status.Phase = "done"
+							machine.Status.Phase = phaseDone
 
 							// Set initialization.provisioned and Ready condition
 							machine.Status.Initialization.Provisioned = ptr.To(true)
@@ -906,7 +914,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 
 			// Full provisioning complete — mark phase done
-			machine.Status.Phase = "done"
+			machine.Status.Phase = phaseDone
 
 			// Set initialization.provisioned to true - this signals to CAPI that the machine is ready
 			machine.Status.Initialization.Provisioned = ptr.To(true)
