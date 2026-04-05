@@ -337,7 +337,7 @@ var _ = Describe("FreeboxMachine phase transitions", func() {
 
 			updated := &infrastructurev1alpha1.FreeboxMachine{}
 			Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal("download"))
+			Expect(updated.Status.Phase).To(Equal(phaseDownload))
 			Expect(updated.Status.TaskID).To(Equal(int64(42)))
 		})
 	})
@@ -356,7 +356,7 @@ var _ = Describe("FreeboxMachine phase transitions", func() {
 			})
 			Expect(k8sClient.Create(testCtx, machine)).To(Succeed())
 			// Simulate download just completed: set phase=download, task done -> will transition to extract
-			machine.Status.Phase = "download"
+			machine.Status.Phase = phaseDownload
 			machine.Status.TaskID = 99
 			Expect(k8sClient.Status().Update(testCtx, machine)).To(Succeed())
 		})
@@ -381,7 +381,7 @@ var _ = Describe("FreeboxMachine phase transitions", func() {
 
 			updated := &infrastructurev1alpha1.FreeboxMachine{}
 			Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal("extract"))
+			Expect(updated.Status.Phase).To(Equal(phaseExtract))
 			Expect(updated.Status.TaskID).To(Equal(int64(0)))
 		})
 	})
@@ -401,7 +401,7 @@ var _ = Describe("FreeboxMachine phase transitions", func() {
 				ImageURL:      uncompressedURL,
 			})
 			Expect(k8sClient.Create(testCtx, machine)).To(Succeed())
-			machine.Status.Phase = "download"
+			machine.Status.Phase = phaseDownload
 			machine.Status.TaskID = 77
 			Expect(k8sClient.Status().Update(testCtx, machine)).To(Succeed())
 		})
@@ -425,7 +425,7 @@ var _ = Describe("FreeboxMachine phase transitions", func() {
 
 			updated := &infrastructurev1alpha1.FreeboxMachine{}
 			Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal("copy"))
+			Expect(updated.Status.Phase).To(Equal(phaseCopy))
 			Expect(updated.Status.TaskID).To(Equal(int64(0)))
 		})
 	})
@@ -444,7 +444,7 @@ var _ = Describe("FreeboxMachine phase transitions", func() {
 			})
 			Expect(k8sClient.Create(testCtx, machine)).To(Succeed())
 			// Simulate extract done -> rename pending
-			machine.Status.Phase = "rename"
+			machine.Status.Phase = phaseRename
 			machine.Status.TaskID = 0
 			machine.Status.RenameSrc = vmStoragePath + "/" + extractedBase
 			machine.Status.RenameDst = vmStoragePath + "/my-vm.raw"
@@ -490,7 +490,7 @@ var _ = Describe("FreeboxMachine phase transitions", func() {
 			Expect(result.RequeueAfter).NotTo(BeZero())
 
 			Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal("resize"))
+			Expect(updated.Status.Phase).To(Equal(phaseResize))
 			Expect(updated.Status.TaskID).To(Equal(int64(0)))
 			Expect(updated.Status.RenameSrc).To(BeEmpty())
 			Expect(updated.Status.RenameDst).To(BeEmpty())
@@ -510,7 +510,7 @@ var _ = Describe("FreeboxMachine phase transitions", func() {
 				ImageURL:      imageURL,
 			})
 			Expect(k8sClient.Create(testCtx, machine)).To(Succeed())
-			machine.Status.Phase = "resize"
+			machine.Status.Phase = phaseResize
 			machine.Status.TaskID = 0
 			Expect(k8sClient.Status().Update(testCtx, machine)).To(Succeed())
 		})
@@ -551,11 +551,12 @@ var _ = Describe("FreeboxMachine phase transitions", func() {
 			// Machine owner it returns early. We verify ImageReady is set but Phase is NOT
 			// prematurely "done" — that would break the IP-polling requeue loop.
 			fc.listDownloadTasksFn = nil // not called in this path
-			_, err = r.Reconcile(testCtx, reconcile.Request{NamespacedName: nn})
+			// May return error or requeue — the VM creation path requires owner Machine; that's fine.
+			_, _ = r.Reconcile(testCtx, reconcile.Request{NamespacedName: nn})
 
 			Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
 			// Phase must remain "resize" until VM creation + IP assignment are complete.
-			Expect(updated.Status.Phase).To(Equal("resize"))
+			Expect(updated.Status.Phase).To(Equal(phaseResize))
 
 			var imageReadyCond *metav1.Condition
 			for i := range updated.Status.Conditions {
@@ -582,7 +583,7 @@ var _ = Describe("FreeboxMachine phase transitions", func() {
 				ImageURL:      imageURL,
 			})
 			Expect(k8sClient.Create(testCtx, machine)).To(Succeed())
-			machine.Status.Phase = "download"
+			machine.Status.Phase = phaseDownload
 			machine.Status.TaskID = 111
 			Expect(k8sClient.Status().Update(testCtx, machine)).To(Succeed())
 		})
