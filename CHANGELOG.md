@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.3](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.3.2...v0.3.3) (2026-04-07)
+
+
+### Bug Fixes
+
+* **deps:** update k8s.io/utils digest to 28399d8 ([4d03bc1](https://github.com/mcanevet/cluster-api-provider-freebox/commit/4d03bc1b343bf32bb6748323381989e5ea7a6c6f))
+* **deps:** update kubernetes monorepo to v0.35.3 ([3f5d43e](https://github.com/mcanevet/cluster-api-provider-freebox/commit/3f5d43ec7e17b1b405c801295b10b786030ec542))
+* **deps:** update module github.com/onsi/ginkgo/v2 to v2.28.1 ([3bb25b3](https://github.com/mcanevet/cluster-api-provider-freebox/commit/3bb25b3a32c39c014ebae00102ad2d6889d60b17))
+* **deps:** update module github.com/onsi/gomega to v1.39.1 ([0c16d81](https://github.com/mcanevet/cluster-api-provider-freebox/commit/0c16d81d706d1fefc641185ff2190f8a287bea03))
+* **deps:** update module sigs.k8s.io/controller-runtime to v0.23.3 ([89fc095](https://github.com/mcanevet/cluster-api-provider-freebox/commit/89fc0953e794401a9b0fbf339f54a3228c4ac109))
+
 ## [0.3.2](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.3.1...v0.3.2) (2026-04-07)
 
 
