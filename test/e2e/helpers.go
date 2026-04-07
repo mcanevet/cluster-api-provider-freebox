@@ -21,8 +21,10 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -74,4 +76,27 @@ func GetObjectKey(obj client.Object) types.NamespacedName {
 		Name:      obj.GetName(),
 		Namespace: obj.GetNamespace(),
 	}
+}
+
+// checkUnstructuredCondition verifies that the given condition type has status "True"
+// on an unstructured object's status.conditions slice.
+func checkUnstructuredCondition(obj *unstructured.Unstructured, conditionType string) error {
+	conditions, found, err := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	if err != nil || !found {
+		return fmt.Errorf("%s status.conditions not found", obj.GetKind())
+	}
+
+	for _, cond := range conditions {
+		condMap, ok := cond.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if condMap["type"] == conditionType {
+			if condMap["status"] != "True" {
+				return fmt.Errorf("%s %s condition should be True, got %v", obj.GetKind(), conditionType, condMap["status"])
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("%s %s condition not found", obj.GetKind(), conditionType)
 }

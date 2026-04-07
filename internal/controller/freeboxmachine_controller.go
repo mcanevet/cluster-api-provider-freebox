@@ -34,7 +34,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/patch"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -58,12 +60,13 @@ const (
 	taskStateError = "error"
 
 	// Phase tracks the image-preparation pipeline
-	phaseDownload = "download"
-	phaseExtract  = "extract"
-	phaseCopy     = "copy"
-	phaseRename   = "rename"
-	phaseResize   = "resize"
-	phaseDone     = "done"
+	phaseDownload  = "download"
+	phaseExtract   = "extract"
+	phaseCopy      = "copy"
+	phaseRename    = "rename"
+	phaseResize    = "resize"
+	phaseVMCreated = "vmcreated" // VM exists, waiting for IP from LAN browser
+	phaseDone      = "done"
 )
 
 // FreeboxMachineReconciler reconciles a FreeboxMachine object
@@ -71,6 +74,7 @@ type FreeboxMachineReconciler struct {
 	client.Client
 	Scheme             *runtime.Scheme
 	FreeboxClient      freeboxclient.Client
+	ClusterCache       clustercache.ClusterCache
 	FreeboxDownloadDir string // Freebox download directory path from /api/v*/downloads/config/
 	VMStoragePath      string // VM storage path from user_main_storage + "/VMs"
 }
@@ -78,6 +82,7 @@ type FreeboxMachineReconciler struct {
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=freeboxmachines,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=freeboxmachines/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=freeboxmachines/finalizers,verbs=update
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/status,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines;machines/status,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
@@ -642,104 +647,39 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			logger.Info("Disk resize completed", "taskID", taskID)
 
 			// Image is now ready (downloaded, extracted/copied, renamed, and resized).
-			// Note: Phase is NOT set to "done" here — it is only set after VM creation
-			// and IP assignment complete. Setting it here would break the IP polling
-			// requeue loop: subsequent reconciles would see Phase=phaseDone, fall through
-			// all phase checks, and return ctrl.Result{} without requeueing.
 			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
 				Type:    ConditionImageReady,
 				Status:  metav1.ConditionTrue,
 				Reason:  "ImageReady",
 				Message: "Image downloaded, extracted, renamed, and resized",
 			})
+
+			// If VM was already created in a previous reconcile (e.g. Status().Update
+			// failed after CreateVirtualMachine), transition to vmcreated phase to
+			// resume IP polling without re-checking the resize task.
+			if machine.Status.VMID != nil {
+				logger.Info("VM already created, transitioning to vmcreated phase", "vmID", *machine.Status.VMID)
+				machine.Status.Phase = phaseVMCreated
+				machine.Status.TaskID = 0
+				if err := r.Status().Update(ctx, &machine); err != nil {
+					if !errors.IsConflict(err) {
+						logger.Error(err, "Failed to update status")
+						return ctrl.Result{}, err
+					}
+				}
+				return ctrl.Result{Requeue: true}, nil
+			}
+
 			if err := r.Status().Update(ctx, &machine); err != nil {
-				// Ignore conflict errors - another reconcile already updated the object
 				if !errors.IsConflict(err) {
 					logger.Error(err, "Failed to update status after resize")
 					return ctrl.Result{}, err
 				}
 				logger.Info("Status update conflict, another reconcile already updated - continuing")
-			} // -----------------------
-			// 7. Create VM (or check IP if already created)
-			// -----------------------
-			// Check if VM already exists (in case status update succeeded but reconcile restarted)
-			if machine.Status.VMID != nil {
-				logger.Info("VM already created, checking for IP address", "vmID", *machine.Status.VMID)
-
-				// VM exists, but we might still need to populate IP address
-				// Check if addresses are already populated
-				if len(machine.Status.Addresses) > 0 {
-					// Addresses already set, nothing more to do
-					logger.Info("VM already has IP addresses", "vmID", *machine.Status.VMID, "addresses", machine.Status.Addresses)
-					return ctrl.Result{}, nil
-				}
-
-				// Try to get the VM to retrieve its MAC address
-				vm, err := r.FreeboxClient.GetVirtualMachine(ctx, *machine.Status.VMID)
-				if err != nil {
-					logger.Error(err, "Failed to get VM details")
-					return ctrl.Result{}, err
-				}
-
-				// Try to get IP address from LAN browser
-				lanHosts, err := r.FreeboxClient.GetLanInterface(ctx, "pub")
-				if err != nil {
-					logger.Error(err, "Failed to query LAN browser")
-					// Don't fail the reconciliation, just requeue to try again
-					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-				}
-
-				logger.Info("Searching for VM in LAN browser", "vmID", *machine.Status.VMID, "vmMac", vm.Mac, "totalHosts", len(lanHosts))
-
-				// Find the host with matching MAC address (case-insensitive comparison)
-				vmMacLower := strings.ToLower(vm.Mac)
-				for _, host := range lanHosts {
-					hostMacLower := strings.ToLower(host.L2Ident.ID)
-					if hostMacLower == vmMacLower {
-						// Extract IPv4 addresses from L3Connectivities
-						var addresses []clusterv1.MachineAddress
-						for _, l3 := range host.L3Connectivities {
-							if l3.Type == "ipv4" && l3.Address != "" {
-								addresses = append(addresses, clusterv1.MachineAddress{
-									Type:    clusterv1.MachineInternalIP,
-									Address: l3.Address,
-								})
-							}
-						}
-						if len(addresses) > 0 {
-							machine.Status.Addresses = addresses
-							logger.Info("Found IP address for existing VM", "vmID", *machine.Status.VMID, "mac", vm.Mac, "addresses", addresses)
-
-							// Full provisioning complete — mark phase done
-							machine.Status.Phase = phaseDone
-
-							// Set initialization.provisioned and Ready condition
-							machine.Status.Initialization.Provisioned = ptr.To(true)
-							meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-								Type:    ReadyCondition,
-								Status:  metav1.ConditionTrue,
-								Reason:  "InfrastructureReady",
-								Message: "Freebox machine infrastructure is fully provisioned",
-							})
-
-							if err := r.Status().Update(ctx, &machine); err != nil {
-								logger.Error(err, "Failed to update FreeboxMachine status with addresses")
-								return ctrl.Result{}, err
-							}
-							return ctrl.Result{}, nil
-						} else {
-							logger.Info("VM found in LAN browser but no IP address yet, will retry", "vmID", *machine.Status.VMID, "mac", vm.Mac)
-							return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-						}
-					}
-				}
-
-				logger.Info("VM not yet visible in LAN browser, will retry", "vmID", *machine.Status.VMID, "mac", vm.Mac)
-				return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 			}
 
 			// -----------------------
-			// Get Machine owner and bootstrap data
+			// 7. Create VM
 			// -----------------------
 			// Get the Machine that owns this FreeboxMachine
 			ownerMachine, err := util.GetOwnerMachine(ctx, r.Client, machine.ObjectMeta)
@@ -824,6 +764,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					OS:                freeboxTypes.UnknownOS,
 					EnableCloudInit:   true,
 					CloudInitUserData: string(bootstrapData),
+					CloudHostName:     machine.Name,
 				}
 
 				createdVM, createErr := r.FreeboxClient.CreateVirtualMachine(ctx, vmPayload)
@@ -834,19 +775,6 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 				vm = createdVM
 				logger.Info("VM created successfully", "vmID", vm.ID, "name", vm.Name)
-			}
-
-			// Set providerID in spec to match CAPI contract
-			// Format: freebox://<vm-id>
-			// Only update if not already set to avoid unnecessary API calls
-			if machine.Spec.ProviderID == "" {
-				providerID := fmt.Sprintf("freebox://%d", vm.ID)
-				machine.Spec.ProviderID = providerID
-				if err := r.Update(ctx, &machine); err != nil {
-					logger.Error(err, "Failed to update FreeboxMachine spec with providerID")
-					return ctrl.Result{}, err
-				}
-				logger.Info("Set providerID", "providerID", providerID)
 			}
 
 			// Store VM ID and disk path in status immediately after creation
@@ -862,85 +790,183 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 			logger.Info("VM started", "vmID", vm.ID)
 
-			// Try to get IP address from LAN browser
-			// Query the LAN browser for hosts on the "pub" interface
-			lanHosts, err := r.FreeboxClient.GetLanInterface(ctx, "pub")
-			if err != nil {
-				logger.Error(err, "Failed to query LAN browser")
-				// Don't fail the reconciliation, just log and continue without addresses
-			} else {
-				logger.Info("Searching for VM in LAN browser", "vmID", vm.ID, "vmMac", vm.Mac, "totalHosts", len(lanHosts))
-				// Find the host with matching MAC address (case-insensitive comparison)
-				vmMacLower := strings.ToLower(vm.Mac)
-				idx := slices.IndexFunc(lanHosts, func(h freeboxTypes.LanInterfaceHost) bool {
-					return strings.ToLower(h.L2Ident.ID) == vmMacLower
-				})
-				if idx < 0 {
-					logger.Info("VM not yet visible in LAN browser, will retry", "vmID", vm.ID, "mac", vm.Mac)
-					// VM not yet in LAN browser - requeue to check again
-					machine.Status.VMID = &vm.ID
-					machine.Status.DiskPath = finalImagePath
-					if err := r.Status().Update(ctx, &machine); err != nil {
-						logger.Error(err, "Failed to update FreeboxMachine status")
-						return ctrl.Result{}, err
-					}
-					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-				}
-				host := lanHosts[idx]
-				// Extract IPv4 addresses from L3Connectivities
-				var addresses []clusterv1.MachineAddress
-				for _, l3 := range host.L3Connectivities {
-					if l3.Type == "ipv4" && l3.Address != "" {
-						addresses = append(addresses, clusterv1.MachineAddress{
-							Type:    clusterv1.MachineInternalIP,
-							Address: l3.Address,
-						})
-					}
-				}
-				if len(addresses) > 0 {
-					machine.Status.Addresses = addresses
-					logger.Info("Found IP address for VM", "vmID", vm.ID, "mac", vm.Mac, "addresses", addresses)
-				} else {
-					logger.Info("VM found in LAN browser but no IP address yet, will retry", "vmID", vm.ID, "mac", vm.Mac)
-					// VM is in LAN browser but no IP yet - requeue to check again
-					machine.Status.VMID = &vm.ID
-					machine.Status.DiskPath = finalImagePath
-					if err := r.Status().Update(ctx, &machine); err != nil {
-						logger.Error(err, "Failed to update FreeboxMachine status")
-						return ctrl.Result{}, err
-					}
-					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-				}
-			}
-
-			// Full provisioning complete — mark phase done
-			machine.Status.Phase = phaseDone
-
-			// Set initialization.provisioned to true - this signals to CAPI that the machine is ready
-			machine.Status.Initialization.Provisioned = ptr.To(true)
-
-			// Set the Ready condition to True - this is the main condition CAPI watches
-			meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-				Type:    ReadyCondition,
-				Status:  metav1.ConditionTrue,
-				Reason:  "InfrastructureReady",
-				Message: "Freebox machine infrastructure is fully provisioned",
-			})
+			// Transition to vmcreated phase for IP polling
+			machine.Status.Phase = phaseVMCreated
+			machine.Status.TaskID = 0
 			if err := r.Status().Update(ctx, &machine); err != nil {
-				// Ignore conflict errors - another reconcile already updated the object
-				if !errors.IsConflict(err) {
-					logger.Error(err, "Failed to update status after VM creation")
-					return ctrl.Result{}, err
-				}
-				logger.Info("Status update conflict, another reconcile already updated - continuing")
+				logger.Error(err, "Failed to update FreeboxMachine status after VM start")
+				return ctrl.Result{}, err
 			}
 
-			return ctrl.Result{}, nil
+			return ctrl.Result{Requeue: true}, nil
 		}
 
+		// Resize still in progress
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
+	// -----------------------
+	// 7b. Poll LAN browser for VM IP address
+	// -----------------------
+	if phase == phaseVMCreated {
+		if machine.Status.VMID == nil {
+			return ctrl.Result{}, fmt.Errorf("phase is vmcreated but VMID is nil")
+		}
+
+		// Get VM details to retrieve MAC address
+		vm, err := r.FreeboxClient.GetVirtualMachine(ctx, *machine.Status.VMID)
+		if err != nil {
+			logger.Error(err, "Failed to get VM details")
+			return ctrl.Result{}, err
+		}
+
+		// Query the LAN browser for hosts on the "pub" interface
+		lanHosts, err := r.FreeboxClient.GetLanInterface(ctx, "pub")
+		if err != nil {
+			logger.Error(err, "Failed to query LAN browser")
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		logger.Info("Searching for VM in LAN browser", "vmID", *machine.Status.VMID, "vmMac", vm.Mac, "totalHosts", len(lanHosts))
+
+		// Find the host with matching MAC address (case-insensitive comparison)
+		vmMacLower := strings.ToLower(vm.Mac)
+		idx := slices.IndexFunc(lanHosts, func(h freeboxTypes.LanInterfaceHost) bool {
+			return strings.ToLower(h.L2Ident.ID) == vmMacLower
+		})
+		if idx < 0 {
+			logger.Info("VM not yet visible in LAN browser, will retry", "vmID", *machine.Status.VMID, "mac", vm.Mac)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		host := lanHosts[idx]
+		// Extract IPv4 addresses from L3Connectivities
+		var addresses []clusterv1.MachineAddress
+		for _, l3 := range host.L3Connectivities {
+			if l3.Type == "ipv4" && l3.Address != "" {
+				addresses = append(addresses, clusterv1.MachineAddress{
+					Type:    clusterv1.MachineInternalIP,
+					Address: l3.Address,
+				})
+			}
+		}
+		if len(addresses) == 0 {
+			logger.Info("VM found in LAN browser but no IP address yet, will retry", "vmID", *machine.Status.VMID, "mac", vm.Mac)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		machine.Status.Addresses = addresses
+		machine.Status.Phase = phaseDone
+		logger.Info("Found IP address for VM", "vmID", *machine.Status.VMID, "mac", vm.Mac, "addresses", addresses)
+
+		if err := r.Status().Update(ctx, &machine); err != nil {
+			logger.Error(err, "Failed to update FreeboxMachine status with addresses")
+			return ctrl.Result{}, err
+		}
+
+		return r.reconcileNodeAndFinalize(ctx, &machine)
+	}
+
+	// -----------------------
+	// 8. Patch workload cluster node (if addresses set but not yet provisioned)
+	// -----------------------
+	if phase == phaseDone && (machine.Status.Initialization.Provisioned == nil || !*machine.Status.Initialization.Provisioned) {
+		return r.reconcileNodeAndFinalize(ctx, &machine)
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// reconcileNodeAndFinalize patches the workload cluster Node with the providerID
+// and then sets the FreeboxMachine's spec.providerID and
+// status.initialization.provisioned to complete the CAPI contract.
+// This follows the CAPD (Docker provider) pattern where the infra provider acts as
+// its own cloud controller manager.
+func (r *FreeboxMachineReconciler) reconcileNodeAndFinalize(ctx context.Context, machine *infrastructurev1alpha1.FreeboxMachine) (ctrl.Result, error) {
+	logger := logf.FromContext(ctx)
+
+	if machine.Status.VMID == nil {
+		return ctrl.Result{}, fmt.Errorf("reconcileNodeAndFinalize called with nil VMID")
+	}
+
+	providerID := fmt.Sprintf("freebox://%d", *machine.Status.VMID)
+
+	// Get the owning CAPI Cluster so we can get a remote client
+	cluster, err := util.GetClusterFromMetadata(ctx, r.Client, machine.ObjectMeta)
+	if err != nil {
+		logger.Error(err, "Failed to get owning Cluster")
+		return ctrl.Result{}, err
+	}
+	if cluster == nil {
+		logger.Info("FreeboxMachine has no owning Cluster yet, waiting")
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	// Get a remote client to the workload cluster
+	remoteClient, err := r.ClusterCache.GetClient(ctx, client.ObjectKeyFromObject(cluster))
+	if err != nil {
+		logger.Info("Cannot connect to workload cluster yet, will retry", "error", err)
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	// Find the Node in the workload cluster by name (CAPD pattern).
+	// The hostname is guaranteed to match machine.Name because we set CloudHostName: machine.Name
+	// when creating the VM, which cloud-init applies as the system hostname.
+	targetNode := &corev1.Node{}
+	if err := remoteClient.Get(ctx, client.ObjectKey{Name: machine.Name}, targetNode); err != nil {
+		if !errors.IsNotFound(err) {
+			logger.Info("Failed to get node from workload cluster, will retry", "error", err)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+		logger.Info("Node not yet registered in workload cluster, will retry", "nodeName", machine.Name)
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	logger.Info("Found matching Node in workload cluster", "nodeName", targetNode.Name, "providerID", providerID)
+
+	// Patch the Node: set providerID
+	patchHelper, err := patch.NewHelper(targetNode, remoteClient)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to create patch helper for node %s: %w", targetNode.Name, err)
+	}
+
+	targetNode.Spec.ProviderID = providerID
+
+	if err := patchHelper.Patch(ctx, targetNode); err != nil {
+		logger.Error(err, "Failed to patch workload cluster node", "nodeName", targetNode.Name)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	logger.Info("Successfully patched workload cluster node", "nodeName", targetNode.Name, "providerID", providerID)
+
+	// Now set providerID on the FreeboxMachine spec (CAPI reads this via contract)
+	if machine.Spec.ProviderID == "" {
+		machine.Spec.ProviderID = providerID
+		if err := r.Update(ctx, machine); err != nil {
+			logger.Error(err, "Failed to update FreeboxMachine spec with providerID")
+			return ctrl.Result{}, err
+		}
+		logger.Info("Set FreeboxMachine providerID", "providerID", providerID)
+	}
+
+	// Mark infrastructure as fully provisioned
+	machine.Status.Initialization.Provisioned = ptr.To(true)
+	meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+		Type:    ReadyCondition,
+		Status:  metav1.ConditionTrue,
+		Reason:  "InfrastructureReady",
+		Message: "Freebox machine infrastructure is fully provisioned",
+	})
+	if err := r.Status().Update(ctx, machine); err != nil {
+		if !errors.IsConflict(err) {
+			logger.Error(err, "Failed to update status after node patch")
+			return ctrl.Result{}, err
+		}
+		logger.Info("Status update conflict after node patch, will requeue to retry")
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	logger.Info("FreeboxMachine fully provisioned", "vmID", *machine.Status.VMID, "providerID", providerID)
 	return ctrl.Result{}, nil
 }
 

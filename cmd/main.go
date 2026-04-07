@@ -25,13 +25,18 @@ import (
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	freeboxclient "github.com/nikolalohinski/free-go/client"
+	corev1 "k8s.io/api/core/v1"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/controllers/clustercache"
+	"sigs.k8s.io/cluster-api/controllers/remote"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -242,6 +247,38 @@ func main() {
 	}
 	setupLog.Info("Using VM storage path from /system/ user_main_storage", "path", vmStoragePath)
 
+	// Set up ClusterCache for accessing workload cluster APIs.
+	// This is required by the FreeboxMachine controller to patch Kubernetes Nodes
+	// with providerID (acting as a cloud controller manager, following the CAPD pattern).
+	secretCachingClient, err := client.New(mgr.GetConfig(), client.Options{
+		HTTPClient: mgr.GetHTTPClient(),
+		Cache: &client.CacheOptions{
+			Reader: mgr.GetCache(),
+		},
+	})
+	if err != nil {
+		setupLog.Error(err, "unable to create secret caching client for ClusterCache")
+		os.Exit(1)
+	}
+
+	clusterCache, err := clustercache.SetupWithManager(ctx, mgr, clustercache.Options{
+		SecretClient: secretCachingClient,
+		Cache:        clustercache.CacheOptions{},
+		Client: clustercache.ClientOptions{
+			UserAgent: remote.DefaultClusterAPIUserAgent("cluster-api-provider-freebox"),
+			Cache: clustercache.ClientCacheOptions{
+				DisableFor: []client.Object{
+					&corev1.ConfigMap{},
+					&corev1.Secret{},
+				},
+			},
+		},
+	}, ctrlcontroller.Options{})
+	if err != nil {
+		setupLog.Error(err, "unable to set up ClusterCache")
+		os.Exit(1)
+	}
+
 	if err := (&controller.FreeboxClusterReconciler{
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
@@ -254,6 +291,7 @@ func main() {
 		Client:             mgr.GetClient(),
 		Scheme:             mgr.GetScheme(),
 		FreeboxClient:      fbClient,
+		ClusterCache:       clusterCache,
 		FreeboxDownloadDir: freeboxDownloadDir,
 		VMStoragePath:      vmStoragePath,
 	}).SetupWithManager(mgr); err != nil {

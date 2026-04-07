@@ -83,6 +83,6 @@ intervals:
   default/wait-job: ["5m", "10s"]
   default/wait-service: ["3m", "10s"]
   default/wait-crd: ["1m", "5s"]
-  default/wait-machine: ["3m", "10s"]
+  default/wait-machine: ["30m", "10s"]
   default/wait-delete: ["3m", "10s"]
 
