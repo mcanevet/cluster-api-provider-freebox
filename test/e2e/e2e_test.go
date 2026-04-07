@@ -20,12 +20,15 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -33,6 +36,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
 )
@@ -74,6 +78,39 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				bootstrapDataSecretName string
 				vmID                    *int64
 			)
+
+			// Cleanup function to delete VM on failure
+			cleanupVM := func() {
+				if vmID != nil && freeboxClient != nil {
+					cleanupCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+					defer cancel()
+					log.FromContext(context.Background()).Info("Cleaning up VM", "vmID", *vmID)
+					// Stop the VM first before deleting (required by Freebox API)
+					// Ignore "not running" errors — the VM may already be stopped.
+					if stopErr := freeboxClient.StopVirtualMachine(cleanupCtx, *vmID); stopErr != nil {
+						log.FromContext(context.Background()).Info("VM stop returned error (may already be stopped)", "vmID", *vmID, "error", stopErr)
+					}
+					// Wait for VM to reach stopped state before deleting
+					for i := 0; i < 24; i++ {
+						vm, getErr := freeboxClient.GetVirtualMachine(cleanupCtx, *vmID)
+						if getErr != nil {
+							log.FromContext(context.Background()).Info("Could not get VM status during cleanup, proceeding with delete", "vmID", *vmID, "error", getErr)
+							break
+						}
+						if vm.Status == "stopped" {
+							break
+						}
+						log.FromContext(context.Background()).Info("Waiting for VM to stop", "vmID", *vmID, "status", vm.Status)
+						time.Sleep(5 * time.Second)
+					}
+					if err := freeboxClient.DeleteVirtualMachine(cleanupCtx, *vmID); err != nil {
+						log.FromContext(context.Background()).Error(err, "Failed to cleanup VM", "vmID", *vmID)
+					} else {
+						log.FromContext(context.Background()).Info("VM cleanup successful", "vmID", *vmID)
+					}
+				}
+			}
+			DeferCleanup(cleanupVM)
 
 			imageURL := "https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-generic-arm64-daily.qcow2"
 			if testImageURL, ok := e2eConfig.Variables["TEST_IMAGE_URL"]; ok {
@@ -123,17 +160,24 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 
 			Expect(clusterProxy.GetClient().Create(ctx, capiCluster)).To(Succeed())
 
-			By("Verifying FreeboxCluster is provisioned")
-			Eventually(func() bool {
+			By("Verifying FreeboxCluster Ready condition is True")
+			Eventually(func() error {
 				updatedCluster := &infrastructurev1alpha1.FreeboxCluster{}
-				err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxCluster), updatedCluster)
-				if err != nil {
-					return false
+				if err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxCluster), updatedCluster); err != nil {
+					return fmt.Errorf("failed to get FreeboxCluster: %w", err)
 				}
-				return updatedCluster.Status.Initialization.Provisioned != nil &&
-					*updatedCluster.Status.Initialization.Provisioned
-			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-crd")...).Should(BeTrue(),
-				"FreeboxCluster should be provisioned")
+
+				readyCondition := meta.FindStatusCondition(updatedCluster.Status.Conditions, "Ready")
+				if readyCondition == nil {
+					return fmt.Errorf("FreeboxCluster Ready condition not found")
+				}
+				if readyCondition.Status != metav1.ConditionTrue {
+					return fmt.Errorf("FreeboxCluster Ready condition should be True, got %s", readyCondition.Status)
+				}
+
+				return nil
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-crd")...).Should(Succeed(),
+				"FreeboxCluster Ready condition should be True")
 
 			By("Creating a FreeboxMachineTemplate for control plane nodes")
 			freeboxMachineTemplate = &infrastructurev1alpha1.FreeboxMachineTemplate{
@@ -208,7 +252,7 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				},
 				"preKubeadmCommands": []interface{}{
 					"echo 'Bootstrap test completed' > /var/log/bootstrap-test.log",
-					// Add control plane endpoint IP as secondary IP
+					// Add control plane endpoint IP as secondary IP so kubeadm and kubelet can bind to it
 					"ip addr add 192.168.1.202/24 dev enp0s5 || true",
 					// Enable IP forwarding and bridge netfilter
 					"modprobe br_netfilter",
@@ -344,23 +388,13 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 					return fmt.Errorf("failed to get FreeboxMachine: %w", err)
 				}
 
-				// Find the Ready condition
-				var readyCondition *metav1.Condition
-				for i := range machine.Status.Conditions {
-					if machine.Status.Conditions[i].Type == "Ready" {
-						readyCondition = &machine.Status.Conditions[i]
-						break
-					}
-				}
-
+				readyCondition := meta.FindStatusCondition(machine.Status.Conditions, "Ready")
 				if readyCondition == nil {
 					return fmt.Errorf("Ready condition not found")
 				}
-
 				if readyCondition.Status != metav1.ConditionFalse {
 					return fmt.Errorf("Ready condition should be False during provisioning, got %s", readyCondition.Status)
 				}
-
 				if readyCondition.Reason != "Provisioning" {
 					return fmt.Errorf("Ready condition Reason should be 'Provisioning', got %s", readyCondition.Reason)
 				}
@@ -437,24 +471,14 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 					return fmt.Errorf("failed to get FreeboxMachine: %w", err)
 				}
 
-				// Find the Ready condition
-				var readyCondition *metav1.Condition
-				for i := range machine.Status.Conditions {
-					if machine.Status.Conditions[i].Type == "Ready" {
-						readyCondition = &machine.Status.Conditions[i]
-						break
-					}
-				}
-
+				readyCondition := meta.FindStatusCondition(machine.Status.Conditions, "Ready")
 				if readyCondition == nil {
 					return fmt.Errorf("Ready condition not found")
 				}
-
 				if readyCondition.Status != metav1.ConditionTrue {
 					return fmt.Errorf("Ready condition should be True when provisioned, got %s (Reason: %s, Message: %s)",
 						readyCondition.Status, readyCondition.Reason, readyCondition.Message)
 				}
-
 				if readyCondition.Reason != "InfrastructureReady" {
 					return fmt.Errorf("Ready condition Reason should be 'InfrastructureReady', got %s", readyCondition.Reason)
 				}
@@ -462,25 +486,6 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 				return nil
 			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(Succeed(),
 				"Ready condition should become True with Reason=InfrastructureReady")
-
-			By("Verifying initialization.provisioned is set to true")
-			Eventually(func() error {
-				machine := &infrastructurev1alpha1.FreeboxMachine{}
-				if err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxMachine), machine); err != nil {
-					return fmt.Errorf("failed to get FreeboxMachine: %w", err)
-				}
-
-				if machine.Status.Initialization.Provisioned == nil {
-					return fmt.Errorf("initialization.provisioned is nil")
-				}
-
-				if !*machine.Status.Initialization.Provisioned {
-					return fmt.Errorf("initialization.provisioned should be true")
-				}
-
-				return nil
-			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(Succeed(),
-				"initialization.provisioned should be true")
 
 			By("Verifying providerID is set in format 'freebox://<vm-id>'")
 			Eventually(func() error {
@@ -501,29 +506,66 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(Succeed(),
 				"providerID should be set in format 'freebox://<vm-id>'")
 
-			By("Waiting for CAPI Cluster to be ready")
-			Eventually(func() bool {
-				cluster := &unstructured.Unstructured{}
-				cluster.SetGroupVersionKind(schema.GroupVersionKind{
-					Group:   "cluster.x-k8s.io",
+			By("Verifying KubeadmConfig is ready")
+			Eventually(func() error {
+				kubeadmConfigList := &unstructured.UnstructuredList{}
+				kubeadmConfigList.SetGroupVersionKind(schema.GroupVersionKind{
+					Group:   "bootstrap.cluster.x-k8s.io",
 					Version: "v1beta2",
-					Kind:    "Cluster",
+					Kind:    "KubeadmConfigList",
 				})
-				if err := clusterProxy.GetClient().Get(ctx, types.NamespacedName{
-					Name:      "test-cluster",
-					Namespace: namespace.Name,
-				}, cluster); err != nil {
-					return false
+
+				if err := clusterProxy.GetClient().List(ctx, kubeadmConfigList); err != nil {
+					return fmt.Errorf("failed to list KubeadmConfigList: %w", err)
 				}
 
-				// Check if cluster is ready via status.phase
-				phase, found, err := unstructured.NestedString(cluster.Object, "status", "phase")
-				if err != nil || !found {
-					return false
+				for _, item := range kubeadmConfigList.Items {
+					labels := item.GetLabels()
+					if labels["cluster.x-k8s.io/cluster-name"] == "test-cluster" {
+						if err := checkUnstructuredCondition(&item, "Ready"); err == nil {
+							return nil
+						}
+					}
 				}
-				return phase == "Provisioned"
-			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-cluster")...).Should(BeTrue(),
-				"Cluster should become ready")
+				return fmt.Errorf("KubeadmConfig Ready condition not found")
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(Succeed(),
+				"KubeadmConfig should be ready")
+
+			By("Verifying KubeadmControlPlane is available")
+			Eventually(func() error {
+				kcp := &unstructured.Unstructured{}
+				kcp.SetGroupVersionKind(schema.GroupVersionKind{
+					Group:   "controlplane.cluster.x-k8s.io",
+					Version: "v1beta2",
+					Kind:    "KubeadmControlPlane",
+				})
+				if err := clusterProxy.GetClient().Get(ctx, types.NamespacedName{
+					Name:      "test-cp",
+					Namespace: namespace.Name,
+				}, kcp); err != nil {
+					return fmt.Errorf("failed to get KubeadmControlPlane: %w", err)
+				}
+				return checkUnstructuredCondition(kcp, "Available")
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-control-plane")...).Should(Succeed(),
+				"KubeadmControlPlane should be available")
+
+			By("Verifying Machine is ready")
+			Eventually(func() error {
+				machine := &unstructured.Unstructured{}
+				machine.SetGroupVersionKind(schema.GroupVersionKind{
+					Group:   "cluster.x-k8s.io",
+					Version: "v1beta2",
+					Kind:    "Machine",
+				})
+				if err := clusterProxy.GetClient().Get(ctx, types.NamespacedName{
+					Name:      createdMachine.GetName(),
+					Namespace: namespace.Name,
+				}, machine); err != nil {
+					return fmt.Errorf("failed to get Machine: %w", err)
+				}
+				return checkUnstructuredCondition(machine, "Ready")
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-control-plane")...).Should(Succeed(),
+				"Machine should be ready")
 
 			By("Verifying API server is accessible on control plane endpoint")
 			Eventually(func() error {
@@ -570,6 +612,24 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-control-plane")...).Should(Succeed(),
 				"API server should be accessible and responding to requests")
 
+			By("Verifying CAPI Cluster is available")
+			Eventually(func() error {
+				cluster := &unstructured.Unstructured{}
+				cluster.SetGroupVersionKind(schema.GroupVersionKind{
+					Group:   "cluster.x-k8s.io",
+					Version: "v1beta2",
+					Kind:    "Cluster",
+				})
+				if err := clusterProxy.GetClient().Get(ctx, types.NamespacedName{
+					Name:      "test-cluster",
+					Namespace: namespace.Name,
+				}, cluster); err != nil {
+					return fmt.Errorf("failed to get Cluster: %w", err)
+				}
+				return checkUnstructuredCondition(cluster, "Available")
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-cluster")...).Should(Succeed(),
+				"Cluster should be available")
+
 			By("Verifying VM exists in Freebox before deletion")
 			var vmID64 int64
 			Eventually(func() error {
@@ -595,28 +655,17 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 					return nil
 				}
 
-				// Check if deletion timestamp is set
 				if machine.DeletionTimestamp == nil {
 					return fmt.Errorf("deletion timestamp not set yet")
 				}
 
-				// Find the Ready condition
-				var readyCondition *metav1.Condition
-				for i := range machine.Status.Conditions {
-					if machine.Status.Conditions[i].Type == "Ready" {
-						readyCondition = &machine.Status.Conditions[i]
-						break
-					}
-				}
-
+				readyCondition := meta.FindStatusCondition(machine.Status.Conditions, "Ready")
 				if readyCondition == nil {
 					return fmt.Errorf("Ready condition not found during deletion")
 				}
-
 				if readyCondition.Status != metav1.ConditionFalse {
 					return fmt.Errorf("Ready condition should be False during deletion, got %s", readyCondition.Status)
 				}
-
 				if readyCondition.Reason != "Deleting" {
 					return fmt.Errorf("Ready condition Reason should be 'Deleting', got %s", readyCondition.Reason)
 				}

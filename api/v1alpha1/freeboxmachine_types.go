@@ -82,8 +82,8 @@ type FreeboxMachineStatus struct {
 	// +optional
 	Addresses []clusterv1.MachineAddress `json:"addresses,omitempty"`
 
-	// Phase tracks the current image-preparation stage:
-	// "download", "extract", "copy", "rename", "resize", or "done".
+	// Phase tracks the current provisioning stage:
+	// "download", "extract", "copy", "rename", "resize", "vmcreated", or "done".
 	// +optional
 	Phase string `json:"phase,omitempty"`
 

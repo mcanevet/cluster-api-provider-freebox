@@ -214,8 +214,8 @@ spec:
                 type: object
               phase:
                 description: |-
-                  Phase tracks the current image-preparation stage:
-                  "download", "extract", "copy", "rename", "resize", or "done".
+                  Phase tracks the current provisioning stage:
+                  "download", "extract", "copy", "rename", "resize", "vmcreated", or "done".
                 type: string
               renameDst:
                 description: RenameDst is the destination path for the rename step.
