@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.3.1...v0.3.2) (2026-04-07)
+
+
+### Bug Fixes
+
+* enable Machine Ready by patching Node with providerID ([202566c](https://github.com/mcanevet/cluster-api-provider-freebox/commit/202566c68f64140e53b9fc55a6c84cff830d12ed))
+
 ## [0.3.1](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.3.0...v0.3.1) (2026-04-05)
 
 
