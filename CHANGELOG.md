@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.3.5...v0.4.0) (2026-04-08)
+
+
+### Features
+
+* add CAPI pivot compatibility with block-move annotation ([ec160ac](https://github.com/mcanevet/cluster-api-provider-freebox/commit/ec160ac733f88c1b6d022b4b98b2a0c4f60394ce))
+* add CAPI pivot compatibility with paused annotation check ([583f663](https://github.com/mcanevet/cluster-api-provider-freebox/commit/583f663be51a27fdcfb1f74f6e3b7f4f1abac3e0))
+
 ## [0.3.5](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.3.4...v0.3.5) (2026-04-08)
 
 
