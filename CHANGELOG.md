@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.4.0...v0.4.1) (2026-04-08)
+
+
+### Bug Fixes
+
+* force v0.4.1 in kustomization files ([a72cccb](https://github.com/mcanevet/cluster-api-provider-freebox/commit/a72cccbaf7ea06acbcb5095af30280cd49a6d3f9))
+
 ## [0.4.0](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.3.5...v0.4.0) (2026-04-08)
 
 
