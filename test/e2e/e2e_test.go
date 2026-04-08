@@ -506,6 +506,49 @@ var _ = Describe("Freebox Provider E2E Tests", func() {
 			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(Succeed(),
 				"providerID should be set in format 'freebox://<vm-id>'")
 
+			By("Verifying CAPI Machine receives addresses from FreeboxMachine (CAPI contract)")
+			Eventually(func() error {
+				machine := &infrastructurev1alpha1.FreeboxMachine{}
+				if err := clusterProxy.GetClient().Get(ctx, GetObjectKey(freeboxMachine), machine); err != nil {
+					return fmt.Errorf("failed to get FreeboxMachine: %w", err)
+				}
+
+				if len(machine.Status.Addresses) == 0 {
+					return fmt.Errorf("FreeboxMachine has no addresses yet")
+				}
+
+				capiMachine := &clusterv1.Machine{}
+				if err := clusterProxy.GetClient().Get(ctx, types.NamespacedName{
+					Name:      createdMachine.GetName(),
+					Namespace: namespace.Name,
+				}, capiMachine); err != nil {
+					return fmt.Errorf("failed to get CAPI Machine: %w", err)
+				}
+
+				if len(capiMachine.Status.Addresses) == 0 {
+					return fmt.Errorf("CAPI Machine has no addresses - addresses not propagated from FreeboxMachine")
+				}
+
+				if len(capiMachine.Status.Addresses) != len(machine.Status.Addresses) {
+					return fmt.Errorf("CAPI Machine has %d addresses, FreeboxMachine has %d",
+						len(capiMachine.Status.Addresses), len(machine.Status.Addresses))
+				}
+
+				for i, addr := range machine.Status.Addresses {
+					if capiMachine.Status.Addresses[i].Type != addr.Type {
+						return fmt.Errorf("address[%d] type mismatch: CAPI has %v, FreeboxMachine has %v",
+							i, capiMachine.Status.Addresses[i].Type, addr.Type)
+					}
+					if capiMachine.Status.Addresses[i].Address != addr.Address {
+						return fmt.Errorf("address[%d] value mismatch: CAPI has %s, FreeboxMachine has %s",
+							i, capiMachine.Status.Addresses[i].Address, addr.Address)
+					}
+				}
+
+				return nil
+			}, e2eConfig.GetIntervals(clusterProxy.GetName(), "wait-machine")...).Should(Succeed(),
+				"CAPI Machine should have addresses propagated from FreeboxMachine with correct values")
+
 			By("Verifying KubeadmConfig is ready")
 			Eventually(func() error {
 				kubeadmConfigList := &unstructured.UnstructuredList{}
