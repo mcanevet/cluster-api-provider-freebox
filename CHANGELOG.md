@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.5](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.3.4...v0.3.5) (2026-04-08)
+
+
+### Bug Fixes
+
+* find workload cluster node by IP instead of name for Talos compatibility ([6678f37](https://github.com/mcanevet/cluster-api-provider-freebox/commit/6678f371482e17dc132377641f5bb4ca0a6c9b4a))
+
 ## [0.3.4](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.3.3...v0.3.4) (2026-04-08)
 
 
