@@ -36,6 +36,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/patch"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -191,6 +192,20 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if err := r.Update(ctx, &machine); err != nil {
 			return ctrl.Result{}, err
 		}
+	}
+
+	// Get the Cluster to check for paused state
+	cluster, err := util.GetClusterFromMetadata(ctx, r.Client, machine.ObjectMeta)
+	if err != nil && !strings.Contains(err.Error(), "no \"cluster.x-k8s.io/cluster-name\" label present") {
+		logger.Error(err, "Failed to get owning Cluster")
+		return ctrl.Result{}, err
+	}
+
+	// Check for paused state - this is required for CAPI pivot compatibility
+	// Skip reconciliation if the Cluster is paused OR if the FreeboxMachine has the paused annotation
+	if cluster != nil && ptr.Deref(cluster.Spec.Paused, false) || annotations.HasPaused(&machine) {
+		logger.Info("Reconciliation skipped due to paused annotation or paused Cluster")
+		return ctrl.Result{}, nil
 	}
 
 	imageURL := machine.Spec.ImageURL
