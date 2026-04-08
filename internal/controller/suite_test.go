@@ -78,10 +78,14 @@ var _ = BeforeSuite(func() {
 	goModCache, err := getGoModCache()
 	Expect(err).NotTo(HaveOccurred())
 
+	// Find the installed cluster-api version from the module cache
+	capiVersion, err := findLatestCAPIVersion(filepath.Join(goModCache, "sigs.k8s.io", "cluster-api"))
+	Expect(err).NotTo(HaveOccurred(), "failed to find cluster-api in module cache")
+
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths: []string{
 			filepath.Join("..", "..", "config", "crd", "bases"),
-			filepath.Join(goModCache, "sigs.k8s.io", "cluster-api@v1.12.4", "config", "crd", "bases"),
+			filepath.Join(goModCache, "sigs.k8s.io", "cluster-api@"+capiVersion, "config", "crd", "bases"),
 		},
 		ErrorIfCRDPathMissing: true,
 	}
@@ -139,4 +143,39 @@ func getGoModCache() (string, error) {
 		return "", fmt.Errorf("go env GOMODCACHE: %w", err)
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+// findLatestCAPIVersion finds the latest installed cluster-api version in the module cache.
+// It looks for "cluster-api@vX.Y.Z" directories in the parent of the unversioned module path.
+func findLatestCAPIVersion(modulePath string) (string, error) {
+	// modulePath is like /path/mod/sigs.k8s.io/cluster-api
+	// We need parent (sigs.k8s.io) and module name (cluster-api)
+	parentDir := filepath.Dir(modulePath)
+	moduleName := filepath.Base(modulePath)
+
+	entries, err := os.ReadDir(parentDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to read module cache: %w", err)
+	}
+
+	var latest string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		prefix := moduleName + "@"
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		version := strings.TrimPrefix(name, prefix)
+		if latest == "" || version > latest {
+			latest = version
+		}
+	}
+
+	if latest == "" {
+		return "", fmt.Errorf("no %s versions found in %s", moduleName, parentDir)
+	}
+	return latest, nil
 }
