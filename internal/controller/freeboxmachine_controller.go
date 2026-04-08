@@ -56,6 +56,11 @@ const (
 
 	FreeboxMachineFinalizer = "freeboxmachine.infrastructure.cluster.x-k8s.io/finalizer"
 
+	// BlockMoveAnnotation is set on resources that cannot be instantaneously paused
+	// to prevent clusterctl move from proceeding until they are paused.
+	// See: https://cluster-api.sigs.k8s.io/clusterctl/commands/move.html
+	BlockMoveAnnotation = "clusterctl.cluster.x-k8s.io/block-move"
+
 	// Task states
 	taskStateDone  = "done"
 	taskStateError = "error"
@@ -205,7 +210,33 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Skip reconciliation if the Cluster is paused OR if the FreeboxMachine has the paused annotation
 	if cluster != nil && ptr.Deref(cluster.Spec.Paused, false) || annotations.HasPaused(&machine) {
 		logger.Info("Reconciliation skipped due to paused annotation or paused Cluster")
+
+		// Remove block-move annotation if present - the resource is now pausable
+		if _, hasBlockMove := machine.Annotations[BlockMoveAnnotation]; hasBlockMove {
+			logger.Info("Removing block-move annotation - resource is paused")
+			delete(machine.Annotations, BlockMoveAnnotation)
+			if err := r.Update(ctx, &machine); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 		return ctrl.Result{}, nil
+	}
+
+	// Set block-move annotation if the resource is in a state that cannot be instantaneously paused
+	// (i.e., VM is being created/provisioned). This prevents clusterctl move from proceeding
+	// until the VM is in a pausable state (phaseDone or phaseVMCreated).
+	currentPhase := machine.Status.Phase
+	if currentPhase != "" && currentPhase != phaseDone && currentPhase != phaseVMCreated {
+		if machine.Annotations == nil {
+			machine.Annotations = make(map[string]string)
+		}
+		if _, hasBlockMove := machine.Annotations[BlockMoveAnnotation]; !hasBlockMove {
+			logger.Info("Setting block-move annotation - resource cannot be instantaneously paused")
+			machine.Annotations[BlockMoveAnnotation] = ""
+			if err := r.Update(ctx, &machine); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 	}
 
 	imageURL := machine.Spec.ImageURL
