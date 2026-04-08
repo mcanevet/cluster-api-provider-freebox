@@ -181,6 +181,115 @@ var _ = Describe("FreeboxMachine Controller", func() {
 			Expect(freeboxMachine.Status.Phase).To(BeEmpty(), "Phase should be empty when paused")
 		})
 	})
+
+	Context("When block-move annotation should not be set", func() {
+		const resourceName = "test-no-block-move"
+		const clusterName = "test-cluster-no-block-move"
+
+		ctx := context.Background()
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			By("creating a Cluster to own the FreeboxMachine")
+			cluster := &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      clusterName,
+					Namespace: "default",
+				},
+				Spec: clusterv1.ClusterSpec{
+					ControlPlaneEndpoint: clusterv1.APIEndpoint{
+						Host: "192.168.1.1",
+						Port: 6443,
+					},
+				},
+			}
+			err := k8sClient.Create(ctx, cluster)
+			if err != nil && !errors.IsAlreadyExists(err) {
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			// Refresh to get UID
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: clusterName, Namespace: "default"}, cluster)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating the FreeboxMachine with Phase=done (already provisioned)")
+			freeboxmachine := &infrastructurev1alpha1.FreeboxMachine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+					Labels: map[string]string{
+						clusterv1.ClusterNameLabel: clusterName,
+					},
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion:         "cluster.x-k8s.io/v1beta2",
+							Kind:               "Cluster",
+							Name:               clusterName,
+							UID:                cluster.UID,
+							Controller:         ptr.To(true),
+							BlockOwnerDeletion: ptr.To(true),
+						},
+					},
+				},
+				Spec: infrastructurev1alpha1.FreeboxMachineSpec{
+					Name:          "test-vm",
+					VCPUs:         2,
+					MemoryMB:      2048,
+					DiskSizeBytes: 20 * 1024 * 1024 * 1024,
+					ImageURL:      "", // Empty to skip FreeboxClient calls
+				},
+				Status: infrastructurev1alpha1.FreeboxMachineStatus{
+					Phase: "done", // VM is fully provisioned - pausable
+				},
+			}
+			err = k8sClient.Create(ctx, freeboxmachine)
+			if err != nil && !errors.IsAlreadyExists(err) {
+				Expect(err).NotTo(HaveOccurred())
+			}
+		})
+
+		AfterEach(func() {
+			By("Cleaning up FreeboxMachine")
+			resource := &infrastructurev1alpha1.FreeboxMachine{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+
+			By("Cleaning up Cluster")
+			cluster := &clusterv1.Cluster{}
+			clusterKey := types.NamespacedName{Name: clusterName, Namespace: "default"}
+			err = k8sClient.Get(ctx, clusterKey, cluster)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, cluster)).To(Succeed())
+			}
+		})
+
+		It("should not set block-move annotation when phase is done", func() {
+			By("Reconciling the FreeboxMachine in done phase (may panic)")
+			controllerReconciler := &FreeboxMachineReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			defer func() {
+				// Verify block-move annotation is NOT set for pausable phase
+				freeboxMachine := &infrastructurev1alpha1.FreeboxMachine{}
+				err := k8sClient.Get(ctx, typeNamespacedName, freeboxMachine)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(freeboxMachine.Annotations).NotTo(HaveKey("clusterctl.cluster.x-k8s.io/block-move"),
+					"block-move annotation should NOT be set when phase is done (pausable)")
+			}()
+
+			_, _ = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+		})
+	})
 })
 
 func TestStripCompressionSuffix(t *testing.T) {
