@@ -932,16 +932,42 @@ func (r *FreeboxMachineReconciler) reconcileNodeProviderID(ctx context.Context, 
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	// Find the Node in the workload cluster by name (CAPD pattern).
-	// The hostname is guaranteed to match machine.Name because we set CloudHostName: machine.Name
-	// when creating the VM, which cloud-init applies as the system hostname.
-	targetNode := &corev1.Node{}
-	if err := remoteClient.Get(ctx, client.ObjectKey{Name: machine.Name}, targetNode); err != nil {
-		if !errors.IsNotFound(err) {
-			logger.Info("Failed to get node from workload cluster, will retry", "error", err)
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	// Find the Node in the workload cluster whose InternalIP matches the machine's IP.
+	// We cannot rely on node name because Talos generates a random hostname (e.g.
+	// "talos-xxx-yyy") instead of using CloudHostName from cloud-init.
+	// kubeadm-based clusters would match by name, but we support Talos first-class.
+	machineIP := ""
+	for _, addr := range machine.Status.Addresses {
+		if addr.Type == clusterv1.MachineInternalIP {
+			machineIP = addr.Address
+			break
 		}
-		logger.Info("Node not yet registered in workload cluster, will retry", "nodeName", machine.Name)
+	}
+	if machineIP == "" {
+		logger.Info("FreeboxMachine has no InternalIP address, will retry")
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	nodeList := &corev1.NodeList{}
+	if err := remoteClient.List(ctx, nodeList); err != nil {
+		logger.Info("Failed to list nodes in workload cluster, will retry", "error", err)
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	var targetNode *corev1.Node
+	for i := range nodeList.Items {
+		for _, addr := range nodeList.Items[i].Status.Addresses {
+			if addr.Type == corev1.NodeInternalIP && addr.Address == machineIP {
+				targetNode = &nodeList.Items[i]
+				break
+			}
+		}
+		if targetNode != nil {
+			break
+		}
+	}
+	if targetNode == nil {
+		logger.Info("Node not yet registered in workload cluster, will retry", "machineIP", machineIP)
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
