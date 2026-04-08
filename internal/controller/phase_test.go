@@ -26,6 +26,7 @@ import (
 	freeboxTypes "github.com/nikolalohinski/free-go/types"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
@@ -33,6 +34,7 @@ import (
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
@@ -638,14 +640,18 @@ var _ = Describe("FreeboxMachine phase transitions", func() {
 })
 
 // fakeClusterCache is a minimal ClusterCache implementation for unit tests.
-// GetClient returns the configured error (or nil client) to simulate an
-// unreachable workload cluster.
+// GetClient returns the configured client (or error) to simulate various
+// workload cluster states.
 type fakeClusterCache struct {
-	getClientErr error
+	getClientErr   error
+	workloadClient client.Client
 }
 
 func (f *fakeClusterCache) GetClient(_ context.Context, _ client.ObjectKey) (client.Client, error) {
-	return nil, f.getClientErr
+	if f.getClientErr != nil {
+		return nil, f.getClientErr
+	}
+	return f.workloadClient, nil
 }
 func (f *fakeClusterCache) GetReader(_ context.Context, _ client.ObjectKey) (client.Reader, error) {
 	panic("not implemented")
@@ -796,5 +802,163 @@ var _ = Describe("FreeboxMachine phaseVMCreated provisioning", func() {
 		Expect(readyCond).NotTo(BeNil())
 		Expect(readyCond.Status).To(Equal(metav1.ConditionTrue),
 			"Ready condition must be True once provisioned")
+	})
+})
+
+// newFakeWorkloadClient builds a fake client seeded with the given objects,
+// using the same scheme as the main test environment (includes corev1).
+func newFakeWorkloadClient(objs ...client.Object) client.Client {
+	return fake.NewClientBuilder().
+		WithScheme(k8sClient.Scheme()).
+		WithObjects(objs...).
+		WithStatusSubresource(objs...).
+		Build()
+}
+
+var _ = Describe("reconcileNodeProviderID — Talos random node names", func() {
+	// Regression test: Talos does NOT use CloudHostName as the Kubernetes node name;
+	// instead it generates a random name like "talos-xxx-yyy". The provider must
+	// therefore find the workload-cluster node by matching its InternalIP against
+	// FreeboxMachine.Status.Addresses rather than looking it up by FreeboxMachine.Name.
+
+	const (
+		vmID            = int64(0) // Freebox API returns 0 for the first VM
+		vmIP            = "192.168.1.185"
+		machineNodeName = "talos-kx7-0ys" // Talos-style random hostname — NOT the machine name
+	)
+
+	testCtx := context.Background()
+
+	setupResources := func(resourceName string) {
+		cluster := &clusterv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: "default",
+			},
+			Spec: clusterv1.ClusterSpec{
+				ControlPlaneEndpoint: clusterv1.APIEndpoint{
+					Host: "192.168.1.202",
+					Port: 6443,
+				},
+			},
+		}
+		Expect(k8sClient.Create(testCtx, cluster)).To(Succeed())
+		DeferCleanup(func() {
+			c := &clusterv1.Cluster{}
+			_ = k8sClient.Get(testCtx, types.NamespacedName{Name: resourceName, Namespace: "default"}, c)
+			_ = k8sClient.Delete(testCtx, c)
+		})
+
+		expectedProviderID := fmt.Sprintf("freebox://%d", vmID)
+		machine := &infrastructurev1alpha1.FreeboxMachine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: "default",
+				Labels: map[string]string{
+					clusterv1.ClusterNameLabel: resourceName,
+				},
+			},
+			Spec: infrastructurev1alpha1.FreeboxMachineSpec{
+				Name:          resourceName,
+				VCPUs:         2,
+				MemoryMB:      2048,
+				DiskSizeBytes: 20 * 1024 * 1024 * 1024,
+				ImageURL:      "https://example.com/image.raw",
+				ProviderID:    expectedProviderID,
+			},
+		}
+		Expect(k8sClient.Create(testCtx, machine)).To(Succeed())
+		DeferCleanup(func() {
+			m := &infrastructurev1alpha1.FreeboxMachine{}
+			_ = k8sClient.Get(testCtx, types.NamespacedName{Name: resourceName, Namespace: "default"}, m)
+			_ = k8sClient.Delete(testCtx, m)
+		})
+
+		vmIDVal := vmID
+		machine.Status.Phase = phaseDone
+		machine.Status.VMID = &vmIDVal
+		machine.Status.Addresses = []clusterv1.MachineAddress{
+			{Type: clusterv1.MachineInternalIP, Address: vmIP},
+		}
+		Expect(k8sClient.Status().Update(testCtx, machine)).To(Succeed())
+	}
+
+	It("patches node providerID when node name differs from machine name (Talos random hostname)", func() {
+		resourceName := "talos-lookup-bug-test"
+		setupResources(resourceName)
+		expectedProviderID := fmt.Sprintf("freebox://%d", vmID)
+
+		// The workload cluster has a node named "talos-kx7-0ys" (Talos random name),
+		// NOT matching the FreeboxMachine name. The node's InternalIP matches the machine IP.
+		// Previously the controller looked up the node by FreeboxMachine name and failed;
+		// now it must find the node by IP address.
+		talosNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: machineNodeName,
+			},
+			Status: corev1.NodeStatus{
+				Addresses: []corev1.NodeAddress{
+					{Type: corev1.NodeInternalIP, Address: vmIP},
+				},
+			},
+		}
+		workloadClient := newFakeWorkloadClient(talosNode)
+
+		r := &FreeboxMachineReconciler{
+			Client:       k8sClient,
+			Scheme:       k8sClient.Scheme(),
+			ClusterCache: &fakeClusterCache{workloadClient: workloadClient},
+		}
+
+		nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
+		result, err := r.Reconcile(testCtx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+		// No requeue: node found by IP and patched successfully
+		Expect(result.RequeueAfter).To(BeZero(),
+			"no requeue expected once node is found by IP and patched")
+
+		// Verify the node was patched with the correct providerID
+		patchedNode := &corev1.Node{}
+		Expect(workloadClient.Get(testCtx, client.ObjectKey{Name: machineNodeName}, patchedNode)).To(Succeed())
+		Expect(patchedNode.Spec.ProviderID).To(Equal(expectedProviderID),
+			"node providerID must be set even when the node name differs from the machine name")
+	})
+
+	It("patches node providerID when node is found by IP (expected behaviour after fix)", func() {
+		resourceName := "talos-lookup-fix-test"
+		setupResources(resourceName)
+		expectedProviderID := fmt.Sprintf("freebox://%d", vmID)
+
+		// Same scenario — after the fix, the node must be found by IP and patched.
+		talosNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: machineNodeName,
+			},
+			Status: corev1.NodeStatus{
+				Addresses: []corev1.NodeAddress{
+					{Type: corev1.NodeInternalIP, Address: vmIP},
+				},
+			},
+		}
+		workloadClient := newFakeWorkloadClient(talosNode)
+
+		r := &FreeboxMachineReconciler{
+			Client:       k8sClient,
+			Scheme:       k8sClient.Scheme(),
+			ClusterCache: &fakeClusterCache{workloadClient: workloadClient},
+		}
+
+		nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
+		result, err := r.Reconcile(testCtx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+		// After the fix: no requeue needed — the node was found by IP and patched
+		Expect(result.RequeueAfter).To(BeZero(),
+			"no requeue expected once node is found by IP and patched")
+
+		// Verify the node WAS patched
+		patchedNode := &corev1.Node{}
+		Expect(workloadClient.Get(testCtx, client.ObjectKey{Name: machineNodeName}, patchedNode)).To(Succeed())
+		Expect(patchedNode.Spec.ProviderID).To(Equal(expectedProviderID),
+			"node providerID must be set to freebox://0 after fix")
 	})
 })
