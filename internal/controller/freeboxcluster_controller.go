@@ -25,6 +25,7 @@ import (
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/annotations"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -64,6 +65,13 @@ func (r *FreeboxClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 	if cluster == nil {
 		logger.Info("Cluster Controller has not yet set OwnerRef")
+		return ctrl.Result{}, nil
+	}
+
+	// Check for paused state - this is required for CAPI pivot compatibility
+	// Skip reconciliation if the Cluster is paused OR if the FreeboxCluster has the paused annotation
+	if ptr.Deref(cluster.Spec.Paused, false) || annotations.HasPaused(&freeboxCluster) {
+		logger.Info("Reconciliation skipped due to paused annotation or paused Cluster")
 		return ctrl.Result{}, nil
 	}
 
