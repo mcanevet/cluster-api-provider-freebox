@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.4](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.3.3...v0.3.4) (2026-04-08)
+
+
+### Bug Fixes
+
+* decouple provisioned=true from workload cluster node patching ([dda2da8](https://github.com/mcanevet/cluster-api-provider-freebox/commit/dda2da89c1fdb5709b5cc9e052e5b1cb45a2967c))
+* **deps:** update module sigs.k8s.io/cluster-api to v1.12.5 ([a16c732](https://github.com/mcanevet/cluster-api-provider-freebox/commit/a16c7327464d96d3c7e7c91b0fbadfc76182a40f))
+* **deps:** update module sigs.k8s.io/cluster-api/test to v1.12.5 ([0852226](https://github.com/mcanevet/cluster-api-provider-freebox/commit/0852226b3ab7ef37457d43aeb1411f95b6ca7eab))
+
 ## [0.3.3](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.3.2...v0.3.3) (2026-04-07)
 
 
