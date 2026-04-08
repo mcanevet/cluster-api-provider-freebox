@@ -855,38 +855,61 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 
-		machine.Status.Addresses = addresses
-		machine.Status.Phase = phaseDone
 		logger.Info("Found IP address for VM", "vmID", *machine.Status.VMID, "mac", vm.Mac, "addresses", addresses)
 
+		providerID := fmt.Sprintf("freebox://%d", *machine.Status.VMID)
+
+		// Phase A: immediately mark infrastructure as provisioned so that CAPI
+		// propagates addresses → Machine.status.addresses and unblocks bootstrap
+		// providers (e.g. Talos) that need addresses before the workload cluster
+		// is reachable.
+		machine.Status.Addresses = addresses
+		machine.Status.Phase = phaseDone
+		machine.Status.Initialization.Provisioned = ptr.To(true)
+		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+			Type:    ReadyCondition,
+			Status:  metav1.ConditionTrue,
+			Reason:  "InfrastructureReady",
+			Message: "Freebox machine infrastructure is fully provisioned",
+		})
 		if err := r.Status().Update(ctx, &machine); err != nil {
 			logger.Error(err, "Failed to update FreeboxMachine status with addresses")
 			return ctrl.Result{}, err
 		}
 
-		return r.reconcileNodeAndFinalize(ctx, &machine)
+		// Set providerID on the spec (required by CAPI contract alongside provisioned=true)
+		machine.Spec.ProviderID = providerID
+		if err := r.Update(ctx, &machine); err != nil {
+			logger.Error(err, "Failed to update FreeboxMachine spec with providerID")
+			return ctrl.Result{}, err
+		}
+		logger.Info("FreeboxMachine provisioned, addresses and providerID set", "providerID", providerID)
+
+		// Phase B (best-effort): patch node.spec.providerID in the workload cluster.
+		// This runs asynchronously; failure here only causes a requeue, not a
+		// rollback of the provisioned state set above.
+		return r.reconcileNodeProviderID(ctx, &machine)
 	}
 
 	// -----------------------
-	// 8. Patch workload cluster node (if addresses set but not yet provisioned)
+	// 8. Patch workload cluster node providerID (best-effort, until it succeeds)
 	// -----------------------
-	if phase == phaseDone && (machine.Status.Initialization.Provisioned == nil || !*machine.Status.Initialization.Provisioned) {
-		return r.reconcileNodeAndFinalize(ctx, &machine)
+	if phase == phaseDone {
+		return r.reconcileNodeProviderID(ctx, &machine)
 	}
 
 	return ctrl.Result{}, nil
 }
 
-// reconcileNodeAndFinalize patches the workload cluster Node with the providerID
-// and then sets the FreeboxMachine's spec.providerID and
-// status.initialization.provisioned to complete the CAPI contract.
-// This follows the CAPD (Docker provider) pattern where the infra provider acts as
-// its own cloud controller manager.
-func (r *FreeboxMachineReconciler) reconcileNodeAndFinalize(ctx context.Context, machine *infrastructurev1alpha1.FreeboxMachine) (ctrl.Result, error) {
+// reconcileNodeProviderID patches the workload cluster Node with the providerID.
+// This is a best-effort, deferred step that runs after the FreeboxMachine is
+// already marked provisioned. It retries until the workload cluster is reachable
+// and the node has registered. Once the node is patched, this function is a no-op.
+func (r *FreeboxMachineReconciler) reconcileNodeProviderID(ctx context.Context, machine *infrastructurev1alpha1.FreeboxMachine) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
 
 	if machine.Status.VMID == nil {
-		return ctrl.Result{}, fmt.Errorf("reconcileNodeAndFinalize called with nil VMID")
+		return ctrl.Result{}, fmt.Errorf("reconcileNodeProviderID called with nil VMID")
 	}
 
 	providerID := fmt.Sprintf("freebox://%d", *machine.Status.VMID)
@@ -922,6 +945,12 @@ func (r *FreeboxMachineReconciler) reconcileNodeAndFinalize(ctx context.Context,
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
+	// Already patched — nothing to do
+	if targetNode.Spec.ProviderID == providerID {
+		logger.Info("Node providerID already set", "nodeName", targetNode.Name, "providerID", providerID)
+		return ctrl.Result{}, nil
+	}
+
 	logger.Info("Found matching Node in workload cluster", "nodeName", targetNode.Name, "providerID", providerID)
 
 	// Patch the Node: set providerID
@@ -937,36 +966,7 @@ func (r *FreeboxMachineReconciler) reconcileNodeAndFinalize(ctx context.Context,
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	logger.Info("Successfully patched workload cluster node", "nodeName", targetNode.Name, "providerID", providerID)
-
-	// Now set providerID on the FreeboxMachine spec (CAPI reads this via contract)
-	if machine.Spec.ProviderID == "" {
-		machine.Spec.ProviderID = providerID
-		if err := r.Update(ctx, machine); err != nil {
-			logger.Error(err, "Failed to update FreeboxMachine spec with providerID")
-			return ctrl.Result{}, err
-		}
-		logger.Info("Set FreeboxMachine providerID", "providerID", providerID)
-	}
-
-	// Mark infrastructure as fully provisioned
-	machine.Status.Initialization.Provisioned = ptr.To(true)
-	meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-		Type:    ReadyCondition,
-		Status:  metav1.ConditionTrue,
-		Reason:  "InfrastructureReady",
-		Message: "Freebox machine infrastructure is fully provisioned",
-	})
-	if err := r.Status().Update(ctx, machine); err != nil {
-		if !errors.IsConflict(err) {
-			logger.Error(err, "Failed to update status after node patch")
-			return ctrl.Result{}, err
-		}
-		logger.Info("Status update conflict after node patch, will requeue to retry")
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-	}
-
-	logger.Info("FreeboxMachine fully provisioned", "vmID", *machine.Status.VMID, "providerID", providerID)
+	logger.Info("Successfully patched workload cluster node with providerID", "nodeName", targetNode.Name, "providerID", providerID)
 	return ctrl.Result{}, nil
 }
 
