@@ -18,8 +18,11 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -33,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -62,11 +66,23 @@ var _ = BeforeSuite(func() {
 	err = infrastructurev1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
+	err = clusterv1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
+
+	// Locate the CAPI CRDs from the Go module cache so we can register
+	// the Cluster type in the envtest API server.
+	goModCache, err := getGoModCache()
+	Expect(err).NotTo(HaveOccurred())
+
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "config", "crd", "bases"),
+			filepath.Join(goModCache, "sigs.k8s.io", "cluster-api@v1.12.4", "config", "crd", "bases"),
+		},
 		ErrorIfCRDPathMissing: true,
 	}
 
@@ -113,4 +129,14 @@ func getFirstFoundEnvTestBinaryDir() string {
 		}
 	}
 	return ""
+}
+
+// getGoModCache returns the Go module cache directory by running "go env GOMODCACHE".
+func getGoModCache() (string, error) {
+	cmd := exec.Command("go", "env", "GOMODCACHE")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("go env GOMODCACHE: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
 }

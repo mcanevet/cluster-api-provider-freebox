@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"crypto/rsa"
+	"fmt"
 	"io"
 
 	freeboxclient "github.com/nikolalohinski/free-go/client"
@@ -26,7 +28,13 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/controllers/clustercache"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
 )
@@ -46,6 +54,8 @@ type fakeClient struct {
 	removeFilesFn        func(ctx context.Context, paths []string) (freeboxTypes.FileSystemTask, error)
 	resizeVirtualDiskFn  func(ctx context.Context, p freeboxTypes.VirtualDisksResizePayload) (int64, error)
 	getVirtualDiskTaskFn func(ctx context.Context, id int64) (freeboxTypes.VirtualMachineDiskTask, error)
+	getVirtualMachineFn  func(ctx context.Context, id int64) (freeboxTypes.VirtualMachine, error)
+	getLanInterfaceFn    func(ctx context.Context, name string) ([]freeboxTypes.LanInterfaceHost, error)
 }
 
 func (f *fakeClient) ListDownloadTasks(ctx context.Context) ([]freeboxTypes.DownloadTask, error) {
@@ -173,7 +183,10 @@ func (f *fakeClient) ListLanInterfaceInfo(context.Context) ([]freeboxTypes.LanIn
 	panic("not implemented")
 }
 func (f *fakeClient) GetLanInterface(ctx context.Context, name string) ([]freeboxTypes.LanInterfaceHost, error) {
-	panic("not implemented")
+	if f.getLanInterfaceFn != nil {
+		return f.getLanInterfaceFn(ctx, name)
+	}
+	panic("GetLanInterface not expected")
 }
 func (f *fakeClient) GetLanInterfaceHost(ctx context.Context, interfaceName, identifier string) (freeboxTypes.LanInterfaceHost, error) {
 	panic("not implemented")
@@ -191,7 +204,10 @@ func (f *fakeClient) CreateVirtualMachine(ctx context.Context, payload freeboxTy
 	panic("not implemented")
 }
 func (f *fakeClient) GetVirtualMachine(ctx context.Context, identifier int64) (freeboxTypes.VirtualMachine, error) {
-	panic("not implemented")
+	if f.getVirtualMachineFn != nil {
+		return f.getVirtualMachineFn(ctx, identifier)
+	}
+	panic("GetVirtualMachine not expected")
 }
 func (f *fakeClient) UpdateVirtualMachine(ctx context.Context, identifier int64, payload freeboxTypes.VirtualMachinePayload) (freeboxTypes.VirtualMachine, error) {
 	panic("not implemented")
@@ -618,5 +634,167 @@ var _ = Describe("FreeboxMachine phase transitions", func() {
 			Expect(readyCond).NotTo(BeNil())
 			Expect(readyCond.Reason).To(Equal("ProvisioningFailed"))
 		})
+	})
+})
+
+// fakeClusterCache is a minimal ClusterCache implementation for unit tests.
+// GetClient returns the configured error (or nil client) to simulate an
+// unreachable workload cluster.
+type fakeClusterCache struct {
+	getClientErr error
+}
+
+func (f *fakeClusterCache) GetClient(_ context.Context, _ client.ObjectKey) (client.Client, error) {
+	return nil, f.getClientErr
+}
+func (f *fakeClusterCache) GetReader(_ context.Context, _ client.ObjectKey) (client.Reader, error) {
+	panic("not implemented")
+}
+func (f *fakeClusterCache) GetUncachedClient(_ context.Context, _ client.ObjectKey) (client.Client, error) {
+	panic("not implemented")
+}
+func (f *fakeClusterCache) GetRESTConfig(_ context.Context, _ client.ObjectKey) (*rest.Config, error) {
+	panic("not implemented")
+}
+func (f *fakeClusterCache) GetClientCertificatePrivateKey(_ context.Context, _ client.ObjectKey) (*rsa.PrivateKey, error) {
+	panic("not implemented")
+}
+func (f *fakeClusterCache) Watch(_ context.Context, _ client.ObjectKey, _ clustercache.Watcher) error {
+	panic("not implemented")
+}
+func (f *fakeClusterCache) GetHealthCheckingState(_ context.Context, _ client.ObjectKey) clustercache.HealthCheckingState {
+	panic("not implemented")
+}
+func (f *fakeClusterCache) GetClusterSource(_ string, _ func(context.Context, client.Object) []ctrl.Request, _ ...clustercache.GetClusterSourceOption) source.Source {
+	panic("not implemented")
+}
+
+var _ clustercache.ClusterCache = &fakeClusterCache{}
+
+var _ = Describe("FreeboxMachine phaseVMCreated provisioning", func() {
+	// Regression test for the Talos deadlock:
+	// The controller must set status.initialization.provisioned=true (and spec.providerID,
+	// status.addresses) as soon as the VM has an IP address, WITHOUT waiting for the
+	// workload cluster to be reachable. This unblocks bootstrap providers (e.g. Talos)
+	// that need Machine.status.addresses before the workload cluster is up.
+	const resourceName = "phase-vmcreated-provisioning-test"
+	const vmID = int64(42)
+	const vmMac = "aa:bb:cc:dd:ee:ff"
+	const vmIP = "192.168.1.100"
+
+	testCtx := context.Background()
+	nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+	BeforeEach(func() {
+		// Create a minimal CAPI Cluster so that GetClusterFromMetadata succeeds.
+		// The Cluster CRD requires spec to be non-null; provide a dummy
+		// controlPlaneEndpoint to satisfy the requirement.
+		cluster := &clusterv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: "default",
+			},
+			Spec: clusterv1.ClusterSpec{
+				ControlPlaneEndpoint: clusterv1.APIEndpoint{
+					Host: "127.0.0.1",
+					Port: 6443,
+				},
+			},
+		}
+		Expect(k8sClient.Create(testCtx, cluster)).To(Succeed())
+
+		// Create FreeboxMachine in phaseVMCreated with a VMID already set,
+		// labelled to its owning Cluster
+		machine := &infrastructurev1alpha1.FreeboxMachine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: "default",
+				Labels: map[string]string{
+					clusterv1.ClusterNameLabel: resourceName,
+				},
+			},
+			Spec: infrastructurev1alpha1.FreeboxMachineSpec{
+				Name:          resourceName,
+				VCPUs:         1,
+				MemoryMB:      512,
+				DiskSizeBytes: 10 * 1024 * 1024 * 1024,
+				ImageURL:      "https://example.com/image.raw",
+			},
+		}
+		Expect(k8sClient.Create(testCtx, machine)).To(Succeed())
+
+		machine.Status.Phase = phaseVMCreated
+		machine.Status.VMID = &[]int64{vmID}[0]
+		Expect(k8sClient.Status().Update(testCtx, machine)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		machine := &infrastructurev1alpha1.FreeboxMachine{}
+		_ = k8sClient.Get(testCtx, nn, machine)
+		_ = k8sClient.Delete(testCtx, machine)
+
+		cluster := &clusterv1.Cluster{}
+		_ = k8sClient.Get(testCtx, nn, cluster)
+		_ = k8sClient.Delete(testCtx, cluster)
+	})
+
+	It("sets provisioned=true and addresses even when the workload cluster is unreachable", func() {
+		fc := &fakeClient{
+			getVirtualMachineFn: func(_ context.Context, id int64) (freeboxTypes.VirtualMachine, error) {
+				Expect(id).To(Equal(vmID))
+				return freeboxTypes.VirtualMachine{ID: vmID, Mac: vmMac}, nil
+			},
+			getLanInterfaceFn: func(_ context.Context, name string) ([]freeboxTypes.LanInterfaceHost, error) {
+				Expect(name).To(Equal("pub"))
+				return []freeboxTypes.LanInterfaceHost{
+					{
+						L2Ident: freeboxTypes.L2Ident{ID: vmMac},
+						L3Connectivities: []freeboxTypes.LanHostL3Connectivity{
+							{Type: "ipv4", Address: vmIP},
+						},
+					},
+				}, nil
+			},
+		}
+
+		r := &FreeboxMachineReconciler{
+			Client:        k8sClient,
+			Scheme:        k8sClient.Scheme(),
+			FreeboxClient: fc,
+			// Simulate an unreachable workload cluster
+			ClusterCache: &fakeClusterCache{getClientErr: fmt.Errorf("cluster not connected")},
+		}
+
+		_, err := r.Reconcile(testCtx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		updated := &infrastructurev1alpha1.FreeboxMachine{}
+		Expect(k8sClient.Get(testCtx, nn, updated)).To(Succeed())
+
+		// CAPI contract: provisioned must be true so Machine.status.addresses gets populated
+		Expect(updated.Status.Initialization.Provisioned).NotTo(BeNil())
+		Expect(*updated.Status.Initialization.Provisioned).To(BeTrue(),
+			"provisioned must be true even when the workload cluster is unreachable")
+
+		// addresses must be set so CAPI can propagate them to Machine.status.addresses
+		Expect(updated.Status.Addresses).NotTo(BeEmpty(),
+			"addresses must be set when the VM has an IP")
+		Expect(updated.Status.Addresses[0].Address).To(Equal(vmIP))
+
+		// providerID must be set on the spec (CAPI contract)
+		Expect(updated.Spec.ProviderID).To(Equal(fmt.Sprintf("freebox://%d", vmID)),
+			"spec.providerID must be set alongside provisioned=true")
+
+		// Ready condition must be True
+		var readyCond *metav1.Condition
+		for i := range updated.Status.Conditions {
+			if updated.Status.Conditions[i].Type == ReadyCondition {
+				readyCond = &updated.Status.Conditions[i]
+				break
+			}
+		}
+		Expect(readyCond).NotTo(BeNil())
+		Expect(readyCond.Status).To(Equal(metav1.ConditionTrue),
+			"Ready condition must be True once provisioned")
 	})
 })
