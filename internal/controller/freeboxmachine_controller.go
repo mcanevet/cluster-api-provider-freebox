@@ -828,13 +828,16 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			machine.Status.VMID = &vm.ID
 			machine.Status.DiskPath = finalImagePath
 
-			// Start the VM
-			if err := r.FreeboxClient.StartVirtualMachine(ctx, vm.ID); err != nil {
-				logger.Error(err, "Failed to start virtual machine")
-				return ctrl.Result{}, err
+			// Start the VM only if it is not already running
+			if vm.Status != "running" {
+				if err := r.FreeboxClient.StartVirtualMachine(ctx, vm.ID); err != nil {
+					logger.Error(err, "Failed to start virtual machine")
+					return ctrl.Result{}, err
+				}
+				logger.Info("VM started", "vmID", vm.ID)
+			} else {
+				logger.Info("VM already running, skipping start", "vmID", vm.ID)
 			}
-
-			logger.Info("VM started", "vmID", vm.ID)
 
 			// Transition to vmcreated phase for IP polling
 			machine.Status.Phase = phaseVMCreated
