@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.4.1...v0.4.2) (2026-04-09)
+
+
+### Bug Fixes
+
+* skip VM start if already running to support clusterctl move pivot ([5646697](https://github.com/mcanevet/cluster-api-provider-freebox/commit/564669770c3a08e85c8ae34c049e2270e2cb1706))
+
 ## [0.4.1](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.4.0...v0.4.1) (2026-04-08)
 
 
