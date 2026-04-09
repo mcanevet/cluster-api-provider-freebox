@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.4.2...v0.4.3) (2026-04-09)
+
+
+### Bug Fixes
+
+* skip VM deletion on clusterctl move via delete-for-move annotation ([1833377](https://github.com/mcanevet/cluster-api-provider-freebox/commit/183337747f9346c10892c713e848d13c189c3918))
+
 ## [0.4.2](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.4.1...v0.4.2) (2026-04-09)
 
 
