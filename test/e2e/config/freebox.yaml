@@ -56,7 +56,7 @@ providers:
     - old: controller:latest
       new: example.com/cluster-api-provider-freebox:v0.0.1
     files:
-    - sourcePath: "../data/infrastructure-freebox/metadata.yaml"
+    - sourcePath: "../../../metadata.yaml"
 
 variables:
   KUBERNETES_VERSION: "v1.34.0"

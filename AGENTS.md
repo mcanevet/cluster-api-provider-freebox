@@ -42,3 +42,56 @@ When working with AI agents on this project, **always** follow the YAGNI princip
 - **Simple implementations**: Start with the simplest working implementation
 
 This helps keep the codebase lean, maintainable, and focused on actual requirements rather than speculative features.
+
+## Release Version Bumps
+
+Only update `metadata.yaml` for **minor** and **major** releases - NOT for patch releases.
+
+- Patch (e.g., 0.4.0 → 0.4.1): No metadata.yaml update needed
+- Minor (e.g., 0.4.0 → 0.5.0): Update metadata.yaml + kustomization.yaml
+- Major (e.g., 0.4.0 → 1.0.0): Update metadata.yaml + kustomization.yaml
+
+### Files to Update for Version Bumps
+
+| File | Description |
+|------|-------------|
+| `metadata.yaml` | Add new version to `releaseSeries` (source of truth at root) |
+| `config/manager/kustomization.yaml` | Update `newTag` to the new version (e.g., `v0.4.1`) |
+
+### Version Bump Checklist
+
+1. **Patch version bump** (e.g., 0.4.0 → 0.4.1):
+   - Only update `config/manager/kustomization.yaml` to new version
+   - No metadata.yaml update needed (patch versions don't change contract)
+
+2. **Minor version bump** (e.g., 0.4.0 → 0.5.0):
+   - Add new version to `metadata.yaml` at root (add to releaseSeries at the top)
+   - Update `config/manager/kustomization.yaml` to new version
+
+3. **Major version bump** (e.g., 0.4.0 → 1.0.0):
+   - Add new version to `metadata.yaml` at root
+   - Update `config/manager/kustomization.yaml` to new version
+   - Preserve old versions in releaseSeries for backward compatibility
+
+### Example: Bumping from v0.4.0 to v0.4.1 (patch)
+
+```bash
+# Update config/manager/kustomization.yaml
+# Change: newTag: v0.4.0 → newTag: v0.4.1
+# No metadata.yaml change needed
+```
+
+### Example: Bumping from v0.4.0 to v0.5.0 (minor)
+
+```bash
+# Update metadata.yaml - add to releaseSeries at the top:
+#   - major: 0
+#     minor: 5
+#     contract: v1beta1
+
+# Update config/manager/kustomization.yaml
+# Change: newTag: v0.4.0 → newTag: v0.5.0
+
+# Run make release to verify config/release/metadata.yaml is correct
+make release VERSION=v0.5.0
+```

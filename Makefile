@@ -168,21 +168,7 @@ release: manifests kustomize ## Generate release artifacts for clusterctl
 	@mkdir -p config/release
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 	$(KUSTOMIZE) build config/default > config/release/infrastructure-components.yaml
-	@echo "apiVersion: clusterctl.cluster.x-k8s.io/v1alpha3" > config/release/metadata.yaml
-	@echo "kind: Metadata" >> config/release/metadata.yaml
-	@echo "releaseSeries:" >> config/release/metadata.yaml
-	@echo "  - major: 0" >> config/release/metadata.yaml
-	@echo "    minor: 4" >> config/release/metadata.yaml
-	@echo "    contract: v1beta1" >> config/release/metadata.yaml
-	@echo "  - major: 0" >> config/release/metadata.yaml
-	@echo "    minor: 3" >> config/release/metadata.yaml
-	@echo "    contract: v1beta1" >> config/release/metadata.yaml
-	@echo "  - major: 0" >> config/release/metadata.yaml
-	@echo "    minor: 2" >> config/release/metadata.yaml
-	@echo "    contract: v1beta1" >> config/release/metadata.yaml
-	@echo "  - major: 0" >> config/release/metadata.yaml
-	@echo "    minor: 1" >> config/release/metadata.yaml
-	@echo "    contract: v1beta1" >> config/release/metadata.yaml
+	@cp metadata.yaml config/release/metadata.yaml
 	@echo "Release artifacts generated:"
 	@echo "  - config/release/infrastructure-components.yaml"
 	@echo "  - config/release/metadata.yaml"
