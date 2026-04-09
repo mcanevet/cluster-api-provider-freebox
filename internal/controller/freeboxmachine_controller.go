@@ -61,6 +61,12 @@ const (
 	// See: https://cluster-api.sigs.k8s.io/clusterctl/commands/move.html
 	BlockMoveAnnotation = "clusterctl.cluster.x-k8s.io/block-move"
 
+	// DeleteForMoveAnnotation is set on resources that are being deleted as part of
+	// clusterctl move. Providers should skip deletion of external resources (e.g., VMs)
+	// when this annotation is present, as the resource is being moved to another cluster.
+	// See: https://cluster-api.sigs.k8s.io/clusterctl/commands/move.html
+	DeleteForMoveAnnotation = "clusterctl.cluster.x-k8s.io/delete-for-move"
+
 	// Task states
 	taskStateDone  = "done"
 	taskStateError = "error"
@@ -111,6 +117,19 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// --- Handle deletion ---
 	if !machine.DeletionTimestamp.IsZero() {
 		if slices.Contains(machine.Finalizers, FreeboxMachineFinalizer) {
+			// Skip VM deletion if this is a clusterctl move operation.
+			// The delete-for-move annotation is added by clusterctl before deleting
+			// objects from the source cluster during a move operation.
+			if _, hasDeleteForMove := machine.Annotations[DeleteForMoveAnnotation]; hasDeleteForMove {
+				logger.Info("Skipping VM deletion: clusterctl move in progress, resource being moved to target cluster")
+				// Remove finalizer to allow the Kubernetes object to be deleted
+				machine.Finalizers = slices.DeleteFunc(machine.Finalizers, func(s string) bool { return s == FreeboxMachineFinalizer })
+				if err := r.Update(ctx, &machine); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{}, nil
+			}
+
 			logger.Info("Deleting VM because FreeboxMachine is being deleted")
 
 			// Set Ready condition to False during deletion
