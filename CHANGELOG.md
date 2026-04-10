@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.4](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.4.3...v0.4.4) (2026-04-10)
+
+
+### Bug Fixes
+
+* watch Cluster paused transitions to auto-remove block-move annotation ([c3eddfb](https://github.com/mcanevet/cluster-api-provider-freebox/commit/c3eddfb949d7aa4e92a3e225b050735b1debddc9))
+
 ## [0.4.3](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.4.2...v0.4.3) (2026-04-09)
 
 
