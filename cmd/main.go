@@ -283,7 +283,7 @@ func main() {
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
 		FreeboxClient: fbClient,
-	}).SetupWithManager(mgr); err != nil {
+	}).SetupWithManager(ctx, mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FreeboxCluster")
 		os.Exit(1)
 	}
@@ -294,7 +294,7 @@ func main() {
 		ClusterCache:       clusterCache,
 		FreeboxDownloadDir: freeboxDownloadDir,
 		VMStoragePath:      vmStoragePath,
-	}).SetupWithManager(mgr); err != nil {
+	}).SetupWithManager(ctx, mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FreeboxMachine")
 		os.Exit(1)
 	}

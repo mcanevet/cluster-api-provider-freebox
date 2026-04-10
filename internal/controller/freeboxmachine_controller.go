@@ -38,8 +38,11 @@ import (
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
@@ -1093,9 +1096,21 @@ func stripCompressionSuffix(name string) string {
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *FreeboxMachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *FreeboxMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
+	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "freeboxmachine")
+
+	clusterToFreeboxMachines, err := util.ClusterToTypedObjectsMapper(mgr.GetClient(), &infrastructurev1alpha1.FreeboxMachineList{}, mgr.GetScheme())
+	if err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&infrastructurev1alpha1.FreeboxMachine{}).
 		Named("freeboxmachine").
+		Watches(
+			&clusterv1.Cluster{},
+			handler.EnqueueRequestsFromMapFunc(clusterToFreeboxMachines),
+			builder.WithPredicates(predicates.ClusterPausedTransitionsOrInfrastructureProvisioned(mgr.GetScheme(), predicateLog)),
+		).
 		Complete(r)
 }

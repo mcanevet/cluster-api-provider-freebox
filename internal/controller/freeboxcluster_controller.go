@@ -26,8 +26,11 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
+	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	freeboxclient "github.com/nikolalohinski/free-go/client"
@@ -115,9 +118,16 @@ func (r *FreeboxClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *FreeboxClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *FreeboxClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
+	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "freeboxcluster")
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&infrastructurev1alpha1.FreeboxCluster{}).
 		Named("freeboxcluster").
+		Watches(
+			&clusterv1.Cluster{},
+			handler.EnqueueRequestsFromMapFunc(util.ClusterToInfrastructureMapFunc(ctx, infrastructurev1alpha1.GroupVersion.WithKind("FreeboxCluster"), mgr.GetClient(), &infrastructurev1alpha1.FreeboxCluster{})),
+			builder.WithPredicates(predicates.ClusterPausedTransitions(mgr.GetScheme(), predicateLog)),
+		).
 		Complete(r)
 }
