@@ -284,6 +284,39 @@ func (f *fakeClient) DeleteUploadTask(ctx context.Context, identifier int64) err
 	panic("not implemented")
 }
 func (f *fakeClient) CleanUploadTasks(ctx context.Context) error { panic("not implemented") }
+func (f *fakeClient) CreateVPNUser(ctx context.Context, payload freeboxTypes.VPNUserPayload) (freeboxTypes.VPNUser, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) DeleteVPNUser(ctx context.Context, identifier string) error {
+	panic("not implemented")
+}
+func (f *fakeClient) GetDownloadConfiguration(ctx context.Context) (freeboxTypes.DownloadConfiguration, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetOpenVPNServerConfig(ctx context.Context) (freeboxTypes.OpenVPNServerConfig, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetSystemInfo(ctx context.Context) (freeboxTypes.SystemConfig, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetVPNUser(ctx context.Context, identifier string) (freeboxTypes.VPNUser, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) GetVPNUserClientConfig(ctx context.Context, identifier string) (string, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) ListVPNUsers(ctx context.Context) ([]freeboxTypes.VPNUser, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) UpdateOpenVPNServerConfig(ctx context.Context, payload freeboxTypes.OpenVPNServerConfig) (freeboxTypes.OpenVPNServerConfig, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) UpdateVPNUser(ctx context.Context, login string, payload freeboxTypes.VPNUserPayload) (freeboxTypes.VPNUser, error) {
+	panic("not implemented")
+}
+func (f *fakeClient) UpdateDownloadConfiguration(ctx context.Context, payload freeboxTypes.DownloadConfiguration) (freeboxTypes.DownloadConfiguration, error) {
+	panic("not implemented")
+}
 
 // newMachineForPhaseTest creates a FreeboxMachine with the given name in the default namespace.
 func newMachineForPhaseTest(name string, spec infrastructurev1alpha1.FreeboxMachineSpec) *infrastructurev1alpha1.FreeboxMachine {
