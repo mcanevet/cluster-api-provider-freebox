@@ -35,7 +35,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
-	"github.com/mcanevet/cluster-api-provider-freebox/internal/freebox"
 )
 
 var (
@@ -162,7 +161,6 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 
 	var freeboxDownloadDir string
 	var vmStoragePath string
-	var sessionToken string
 
 	freeboxToken := e2eConfig.Variables["FREEBOX_TOKEN"]
 	Expect(freeboxToken).ToNot(BeEmpty(), "FREEBOX_TOKEN must be set")
@@ -173,16 +171,10 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	_, err = freeboxClient.Login(ctx)
 	Expect(err).ToNot(HaveOccurred(), "failed to login to Freebox")
 
-	By("Getting Freebox session token for API calls")
-	// Get a session token for our direct API calls since free-go doesn't expose /downloads/config/ yet
-	sessionToken, err = freebox.GetSessionToken(freeboxEndpoint, freeboxVersion, freeboxAppID, freeboxToken)
-	Expect(err).ToNot(HaveOccurred(), "failed to get session token")
-
-	By("Fetching Freebox download directory from Freebox download config")
-	// Query the Freebox API to get the default download directory and require it.
-	// This is a direct HTTP call since free-go doesn't expose /downloads/config/ yet.
-	freeboxDownloadDir, err = freebox.GetDownloadDir(freeboxEndpoint, freeboxVersion, sessionToken)
-	Expect(err).ToNot(HaveOccurred(), "failed to get download_dir from Freebox /downloads/config/")
+	By("Fetching Freebox download directory using free-go")
+	downloadConfig, err := freeboxClient.GetDownloadConfiguration(ctx)
+	Expect(err).ToNot(HaveOccurred(), "failed to get download configuration from Freebox")
+	freeboxDownloadDir = string(downloadConfig.DownloadDir)
 
 	// Use the download_dir from the Freebox API unconditionally.
 	e2eConfig.Variables["FREEBOX_DOWNLOAD_DIR"] = freeboxDownloadDir

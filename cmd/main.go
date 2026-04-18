@@ -45,7 +45,6 @@ import (
 
 	infrastructurev1alpha1 "github.com/mcanevet/cluster-api-provider-freebox/api/v1alpha1"
 	"github.com/mcanevet/cluster-api-provider-freebox/internal/controller"
-	"github.com/mcanevet/cluster-api-provider-freebox/internal/freebox"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -225,21 +224,13 @@ func main() {
 	}
 	setupLog.Info("Logged in to Freebox successfully", "permissions", permissions)
 
-	// Get a session token for our direct API calls.
-	// Since free-go doesn't expose /downloads/config/ endpoint yet,
-	// we make direct HTTP calls with our own session.
-	sessionToken, err := freebox.GetSessionToken(freeboxEndpoint, freeboxVersion, freeboxAppID, freeboxToken)
+	// Fetch Freebox download directory from Freebox using free-go
+	downloadConfig, err := fbClient.GetDownloadConfiguration(ctx)
 	if err != nil {
-		setupLog.Error(err, "unable to get session token for API calls")
+		setupLog.Error(err, "unable to fetch download configuration from Freebox")
 		os.Exit(1)
 	}
-
-	// Fetch Freebox download directory from Freebox download config
-	freeboxDownloadDir, err = freebox.GetDownloadDir(freeboxEndpoint, freeboxVersion, sessionToken)
-	if err != nil {
-		setupLog.Error(err, "unable to fetch download_dir from Freebox /downloads/config/")
-		os.Exit(1)
-	}
+	freeboxDownloadDir = string(downloadConfig.DownloadDir)
 	setupLog.Info("Using Freebox download directory from /downloads/config", "path", freeboxDownloadDir)
 
 	// Fetch VM storage path from Freebox system config using free-go
