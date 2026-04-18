@@ -804,7 +804,7 @@ func (r *FreeboxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			// Check if VM already exists with same name AND disk path, to guard
 			// against duplicate creation if Status().Update failed after a previous
 			// CreateVirtualMachine call.
-			// If the list call fails (e.g. empty result from Freebox), skip dedup and proceed to create.
+			// If the list call fails, skip dedup and proceed to create.
 			var vm freeboxTypes.VirtualMachine
 			var foundVM *freeboxTypes.VirtualMachine
 			existingVMs, listErr := r.FreeboxClient.ListVirtualMachines(ctx)
