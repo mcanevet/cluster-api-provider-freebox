@@ -197,6 +197,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	var freeboxDownloadDir string
+	var vmStoragePath string
+
 	freeboxAppID := os.Getenv("FREEBOX_APP_ID")
 	if freeboxAppID == "" {
 		setupLog.Error(err, "FREEBOX_APP_ID undefined")
@@ -223,7 +226,7 @@ func main() {
 	setupLog.Info("Logged in to Freebox successfully", "permissions", permissions)
 
 	// Get a session token for our direct API calls.
-	// Since free-go doesn't expose /downloads/config/ and /system/ endpoints,
+	// Since free-go doesn't expose /downloads/config/ endpoint yet,
 	// we make direct HTTP calls with our own session.
 	sessionToken, err := freebox.GetSessionToken(freeboxEndpoint, freeboxVersion, freeboxAppID, freeboxToken)
 	if err != nil {
@@ -232,19 +235,20 @@ func main() {
 	}
 
 	// Fetch Freebox download directory from Freebox download config
-	freeboxDownloadDir, err := freebox.GetDownloadDir(freeboxEndpoint, freeboxVersion, sessionToken)
+	freeboxDownloadDir, err = freebox.GetDownloadDir(freeboxEndpoint, freeboxVersion, sessionToken)
 	if err != nil {
 		setupLog.Error(err, "unable to fetch download_dir from Freebox /downloads/config/")
 		os.Exit(1)
 	}
 	setupLog.Info("Using Freebox download directory from /downloads/config", "path", freeboxDownloadDir)
 
-	// Fetch VM storage path from Freebox system config
-	vmStoragePath, err := freebox.GetVMStoragePath(freeboxEndpoint, freeboxVersion, sessionToken)
+	// Fetch VM storage path from Freebox system config using free-go
+	systemConfig, err := fbClient.GetSystemInfo(ctx)
 	if err != nil {
-		setupLog.Error(err, "unable to fetch user_main_storage from Freebox /system/")
+		setupLog.Error(err, "unable to fetch system info from Freebox")
 		os.Exit(1)
 	}
+	vmStoragePath = systemConfig.UserMainStorage
 	setupLog.Info("Using VM storage path from /system/ user_main_storage", "path", vmStoragePath)
 
 	// Set up ClusterCache for accessing workload cluster APIs.

@@ -20,6 +20,7 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -159,30 +160,38 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(freeboxAppID).ToNot(BeEmpty(), "FREEBOX_APP_ID must be set")
 	freeboxClient.WithAppID(freeboxAppID)
 
+	var freeboxDownloadDir string
+	var vmStoragePath string
+	var sessionToken string
+
 	freeboxToken := e2eConfig.Variables["FREEBOX_TOKEN"]
 	Expect(freeboxToken).ToNot(BeEmpty(), "FREEBOX_TOKEN must be set")
 	freeboxClient.WithPrivateToken(freeboxToken)
 
+	// Login to validate credentials work
+	ctx := context.Background()
+	_, err = freeboxClient.Login(ctx)
+	Expect(err).ToNot(HaveOccurred(), "failed to login to Freebox")
+
 	By("Getting Freebox session token for API calls")
-	// Get a session token for our direct API calls since free-go doesn't expose all endpoints
-	sessionToken, err := freebox.GetSessionToken(freeboxEndpoint, freeboxVersion, freeboxAppID, freeboxToken)
+	// Get a session token for our direct API calls since free-go doesn't expose /downloads/config/ yet
+	sessionToken, err = freebox.GetSessionToken(freeboxEndpoint, freeboxVersion, freeboxAppID, freeboxToken)
 	Expect(err).ToNot(HaveOccurred(), "failed to get session token")
 
 	By("Fetching Freebox download directory from Freebox download config")
 	// Query the Freebox API to get the default download directory and require it.
 	// This is a direct HTTP call since free-go doesn't expose /downloads/config/ yet.
-	freeboxDownloadDir, err := freebox.GetDownloadDir(freeboxEndpoint, freeboxVersion, sessionToken)
+	freeboxDownloadDir, err = freebox.GetDownloadDir(freeboxEndpoint, freeboxVersion, sessionToken)
 	Expect(err).ToNot(HaveOccurred(), "failed to get download_dir from Freebox /downloads/config/")
 
 	// Use the download_dir from the Freebox API unconditionally.
 	e2eConfig.Variables["FREEBOX_DOWNLOAD_DIR"] = freeboxDownloadDir
 	GinkgoLogr.Info("Using Freebox download directory (from Freebox /downloads/config)", "path", freeboxDownloadDir)
 
-	By("Fetching VM storage path from Freebox system config")
-	// Query the Freebox API to get the VM storage path and require it.
-	// This is a direct HTTP call since free-go doesn't expose /system/ yet.
-	vmStoragePath, err := freebox.GetVMStoragePath(freeboxEndpoint, freeboxVersion, sessionToken)
-	Expect(err).ToNot(HaveOccurred(), "failed to get user_main_storage from Freebox /system/")
+	By("Fetching VM storage path from Freebox system config using free-go")
+	systemConfig, err := freeboxClient.GetSystemInfo(ctx)
+	Expect(err).ToNot(HaveOccurred(), "failed to get system info from Freebox")
+	vmStoragePath = systemConfig.UserMainStorage
 
 	// Use the VM storage path from the Freebox API unconditionally.
 	e2eConfig.Variables["VM_STORAGE_PATH"] = vmStoragePath
