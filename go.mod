@@ -3,7 +3,7 @@ module github.com/mcanevet/cluster-api-provider-freebox
 go 1.25.0
 
 require (
-	github.com/nikolalohinski/free-go v1.10.0
+	github.com/nikolalohinski/free-go v1.11.0
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
 	k8s.io/api v0.35.4
