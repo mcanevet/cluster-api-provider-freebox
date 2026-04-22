@@ -14,7 +14,7 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         with:
           # Using a PAT instead of GITHUB_TOKEN so that tag creation
           # triggers the release.yaml workflow
