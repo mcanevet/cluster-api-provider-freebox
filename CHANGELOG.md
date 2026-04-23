@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.5](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.4.4...v0.4.5) (2026-04-23)
+
+
+### Bug Fixes
+
+* **deps:** update kubernetes monorepo to v0.35.4 ([2f60711](https://github.com/mcanevet/cluster-api-provider-freebox/commit/2f607114b187cdd0e0da1937c6114e1a6af24d8a))
+
 ## [0.4.4](https://github.com/mcanevet/cluster-api-provider-freebox/compare/v0.4.3...v0.4.4) (2026-04-10)
 
 
