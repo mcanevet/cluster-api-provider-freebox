@@ -187,6 +187,8 @@ github.com/nikolalohinski/free-go v1.11.0 h1:yqS5b+Gsfwhv1C4Ky/5qmbiwfLRyvc21QSi
 github.com/nikolalohinski/free-go v1.11.0/go.mod h1:BQSeyvNOQNopE6GQllko4owZAO8wGNDYO1ZwYYd6wXI=
 github.com/nikolalohinski/free-go v1.11.1-0.20260418140506-0c410ddd3dc0 h1:dzWF9OwrPZcMwOSGKhMr+abBhZTx+8yTEaGp5oUlcyM=
 github.com/nikolalohinski/free-go v1.11.1-0.20260418140506-0c410ddd3dc0/go.mod h1:BQSeyvNOQNopE6GQllko4owZAO8wGNDYO1ZwYYd6wXI=
+github.com/nikolalohinski/free-go v1.11.1-0.20260423053819-8afbbd71d663 h1:pFjUM+0nymGBtVfxsJxiTDY9PcpIbxdrsB9y55uByCc=
+github.com/nikolalohinski/free-go v1.11.1-0.20260423053819-8afbbd71d663/go.mod h1:BQSeyvNOQNopE6GQllko4owZAO8wGNDYO1ZwYYd6wXI=
 github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 h1:zrbMGy9YXpIeTnGj4EljqMiZsIcE09mmF8XsD5AYOJc=
 github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6/go.mod h1:rEKTHC9roVVicUIfZK7DYrdIoM0EOr8mK1Hj5s3JjH0=
 github.com/olekukonko/errors v1.1.0 h1:RNuGIh15QdDenh+hNvKrJkmxxjV4hcS50Db478Ou5sM=
