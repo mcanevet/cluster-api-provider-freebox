@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/nikolalohinski/free-go v1.11.1-0.20260418140506-0c410ddd3dc0
 	github.com/onsi/ginkgo/v2 v2.28.1
-	github.com/onsi/gomega v1.39.1
+	github.com/onsi/gomega v1.40.0
 	k8s.io/api v0.35.4
 	k8s.io/apimachinery v0.35.4
 	k8s.io/client-go v0.35.4
