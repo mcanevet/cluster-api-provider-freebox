@@ -3,7 +3,7 @@ module github.com/mcanevet/cluster-api-provider-freebox
 go 1.25.0
 
 require (
-	github.com/nikolalohinski/free-go v1.11.1-0.20260418140506-0c410ddd3dc0
+	github.com/nikolalohinski/free-go v1.13.0
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
 	k8s.io/api v0.35.4
@@ -70,6 +70,7 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
+	github.com/miekg/dns v1.1.72 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/moby/api v1.54.1 // indirect
 	github.com/moby/moby/client v0.4.0 // indirect
