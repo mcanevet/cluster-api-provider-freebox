@@ -165,6 +165,8 @@ github.com/mattn/go-runewidth v0.0.16 h1:E5ScNMtiwvlvB5paMFdw9p4kSQzbXFikJ5SQO6T
 github.com/mattn/go-runewidth v0.0.16/go.mod h1:Jdepj2loyihRzMpdS35Xk/zdY8IAYHsh153qUoGf23w=
 github.com/mfridman/tparse v0.18.0 h1:wh6dzOKaIwkUGyKgOntDW4liXSo37qg5AXbIhkMV3vE=
 github.com/mfridman/tparse v0.18.0/go.mod h1:gEvqZTuCgEhPbYk/2lS3Kcxg1GmTxxU7kTC8DvP0i/A=
+github.com/miekg/dns v1.1.72 h1:vhmr+TF2A3tuoGNkLDFK9zi36F2LS+hKTRW0Uf8kbzI=
+github.com/miekg/dns v1.1.72/go.mod h1:+EuEPhdHOsfk6Wk5TT2CzssZdqkmFhf8r+aVyDEToIs=
 github.com/mitchellh/copystructure v1.2.0 h1:vpKXTN4ewci03Vljg/q9QvCGUDttBOGBIa15WveJJGw=
 github.com/mitchellh/copystructure v1.2.0/go.mod h1:qLl+cE2AmVv+CoeAwDPye/v+N2HKCj9FbZEVFJRxO9s=
 github.com/mitchellh/reflectwalk v1.0.2 h1:G2LzWKi524PWgd3mLHV8Y5k7s6XUvT0Gef6zxSIeXaQ=
@@ -187,6 +189,8 @@ github.com/nikolalohinski/free-go v1.11.0 h1:yqS5b+Gsfwhv1C4Ky/5qmbiwfLRyvc21QSi
 github.com/nikolalohinski/free-go v1.11.0/go.mod h1:BQSeyvNOQNopE6GQllko4owZAO8wGNDYO1ZwYYd6wXI=
 github.com/nikolalohinski/free-go v1.11.1-0.20260418140506-0c410ddd3dc0 h1:dzWF9OwrPZcMwOSGKhMr+abBhZTx+8yTEaGp5oUlcyM=
 github.com/nikolalohinski/free-go v1.11.1-0.20260418140506-0c410ddd3dc0/go.mod h1:BQSeyvNOQNopE6GQllko4owZAO8wGNDYO1ZwYYd6wXI=
+github.com/nikolalohinski/free-go v1.13.0 h1:VIQDYlXTzRuHuNTFj/47sQlHZioaoWoNePSDFZbcbRs=
+github.com/nikolalohinski/free-go v1.13.0/go.mod h1:hyRE8PTkdL9qiAsBHPDgbs9tCch7lKeYbvzFNewiKiY=
 github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 h1:zrbMGy9YXpIeTnGj4EljqMiZsIcE09mmF8XsD5AYOJc=
 github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6/go.mod h1:rEKTHC9roVVicUIfZK7DYrdIoM0EOr8mK1Hj5s3JjH0=
 github.com/olekukonko/errors v1.1.0 h1:RNuGIh15QdDenh+hNvKrJkmxxjV4hcS50Db478Ou5sM=
